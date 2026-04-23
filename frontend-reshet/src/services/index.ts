@@ -13,10 +13,7 @@ export type {
   AuthoringFieldSpec,
 } from "./graph-authoring";
 export type {
-  RAGIndex, 
-  RAGStats,
   RAGPipeline, 
-  ChunkPreview, 
   VisualPipeline,
   VisualPipelineNode,
   VisualPipelineEdge,

@@ -52,8 +52,9 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "Graph-first authoring is the default path." in instructions
     assert "Use agents.create for first agent creation and agents.update for graph updates." in instructions
     assert "Use rag.create_visual_pipeline for first pipeline creation and rag.update_visual_pipeline for graph updates." in instructions
+    assert "Both require pipeline_type and only return operators valid for that pipeline type." in instructions
     assert "For agents.create and agents.update, send graph_definition and then use agents.validate as the repair checkpoint." in instructions
-    assert "For rag.create_visual_pipeline and rag.update_visual_pipeline, send nodes and edges at top level and use rag.compile_visual_pipeline as the repair checkpoint." in instructions
+    assert "For rag.create_visual_pipeline, send pipeline_type plus nodes and edges at top level." in instructions
     assert "For retrieval pipelines, include a retrieval_result output node." in instructions
     assert "If rag.compile_visual_pipeline fails, repair that same pipeline first." in instructions
     assert "Do not call rag.get_executable_pipeline or rag.get_executable_input_schema until rag.compile_visual_pipeline succeeds." in instructions
@@ -127,11 +128,12 @@ def test_platform_action_schema_is_direct_field():
 
     rag_create_schema = registry_seeding._build_platform_action_tool_schema("rag.create_visual_pipeline")["input"]
     assert "graph_definition" not in rag_create_schema["properties"]
-    assert set(rag_create_schema["required"]) == {"name", "nodes", "edges"}
+    assert set(rag_create_schema["required"]) == {"name", "pipeline_type", "nodes", "edges"}
     assert rag_create_schema["additionalProperties"] is False
 
     rag_update_schema = registry_seeding._build_platform_action_tool_schema("rag.update_visual_pipeline")["input"]
     assert "patch" not in rag_update_schema["properties"]
+    assert "pipeline_type" not in rag_update_schema["properties"]
     assert "nodes" in rag_update_schema["properties"]
     assert "edges" in rag_update_schema["properties"]
     assert rag_update_schema["dependentRequired"] == {"nodes": ["edges"], "edges": ["nodes"]}
@@ -141,6 +143,12 @@ def test_platform_action_schema_is_direct_field():
         {"required": ["description"]},
         {"required": ["nodes", "edges"]},
     ]
+
+    rag_catalog_schema = registry_seeding._build_platform_action_tool_schema("rag.operators.catalog")["input"]
+    assert rag_catalog_schema["required"] == ["pipeline_type"]
+
+    rag_schema_schema = registry_seeding._build_platform_action_tool_schema("rag.operators.schema")["input"]
+    assert rag_schema_schema["required"] == ["pipeline_type", "operator_ids"]
 
     rag_create_job_schema = registry_seeding._build_platform_action_tool_schema("rag.create_job")["input"]
     assert rag_create_job_schema["required"] == ["executable_pipeline_id"]

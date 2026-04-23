@@ -33,46 +33,42 @@ def _template_files(*, app_id: UUID, public_id: str, agent_id: UUID, template_ke
 
 
 def _install_app_create_stub(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _create_initial_revision(
-        db,
-        *,
-        app,
-        kind,
-        template_key,
-        entry_file,
-        files,
-        created_by,
-        source_revision_id,
-        origin_kind,
-        **kwargs,
-    ):
-        _ = db, kind, template_key, entry_file, files, source_revision_id, kwargs
-        _, files = _template_files(
-            app_id=app.id,
-            public_id=app.public_id,
-            agent_id=app.agent_id,
-            template_key=app.template_key,
-        )
-        revision = await create_app_version(
-            db,
-            app=app,
-            kind=PublishedAppRevisionKind.draft,
-            template_key=app.template_key,
-            entry_file=entry_file,
-            files=files,
-            created_by=created_by,
-            source_revision_id=source_revision_id,
-            origin_kind=origin_kind,
-            build_status=PublishedAppRevisionBuildStatus.succeeded,
-            build_seq=1,
-            dist_storage_prefix=f"apps/{app.id}/revisions/{uuid4()}/dist",
-            dist_manifest={"entry_html": "index.html", "assets": [], "source_fingerprint": f"fp-{app.id}"},
-            template_runtime="vite_static",
-        )
-        app.current_draft_revision_id = revision.id
-        return revision
+    _ = monkeypatch
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin_routes_apps.create_app_version", _create_initial_revision)
+
+async def _seed_initial_revision_for_app(
+    db_session,
+    *,
+    app_id: str,
+    user_id: UUID,
+) -> PublishedAppRevision:
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+    entry_file, files = _template_files(
+        app_id=app.id,
+        public_id=app.public_id,
+        agent_id=app.agent_id,
+        template_key=app.template_key,
+    )
+    revision = await create_app_version(
+        db_session,
+        app=app,
+        kind=PublishedAppRevisionKind.draft,
+        template_key=app.template_key,
+        entry_file=entry_file,
+        files=files,
+        created_by=user_id,
+        source_revision_id=None,
+        origin_kind="app_init",
+        build_status=PublishedAppRevisionBuildStatus.succeeded,
+        build_seq=1,
+        dist_storage_prefix=f"apps/{app.id}/revisions/{uuid4()}/dist",
+        dist_manifest={"entry_html": "index.html", "assets": [], "source_fingerprint": f"fp-{app.id}"},
+        template_runtime="vite_static",
+    )
+    app.current_draft_revision_id = revision.id
+    await db_session.commit()
+    return revision
 
 
 async def _create_app(
@@ -103,10 +99,16 @@ async def test_removed_legacy_endpoints_return_410_with_migration_codes(client, 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id = await _create_app(client, headers, name="Legacy Cut App", agent_id=str(agent.id))
+    initial_revision = await _seed_initial_revision_for_app(
+        db_session,
+        app_id=app_id,
+        user_id=user.id,
+    )
 
     state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
     assert state_resp.status_code == 200
     revision_id = state_resp.json()["current_draft_revision"]["id"]
+    assert revision_id == str(initial_revision.id)
 
     create_revision_resp = await client.post(
         f"/admin/apps/{app_id}/builder/revisions",
@@ -137,13 +139,17 @@ async def test_versions_list_get_restore_and_cross_app_guard(client, db_session,
 
     app_id = await _create_app(client, headers, name="Version List App", agent_id=str(agent.id))
     app_two_id = await _create_app(client, headers, name="Version Guard App", agent_id=str(agent.id))
+    initial_revision = await _seed_initial_revision_for_app(
+        db_session,
+        app_id=app_id,
+        user_id=user.id,
+    )
 
     state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
     assert state_resp.status_code == 200
     initial_revision_id = UUID(state_resp.json()["current_draft_revision"]["id"])
 
     app = await db_session.get(PublishedApp, UUID(app_id))
-    initial_revision = await db_session.get(PublishedAppRevision, initial_revision_id)
     assert app is not None
     assert initial_revision is not None
 
@@ -253,6 +259,11 @@ async def test_publish_selected_materialized_version_succeeds_immediately(client
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id = await _create_app(client, headers, name="Publish Version App", agent_id=str(agent.id))
+    await _seed_initial_revision_for_app(
+        db_session,
+        app_id=app_id,
+        user_id=user.id,
+    )
 
     state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
     assert state_resp.status_code == 200
@@ -287,6 +298,11 @@ async def test_publish_non_materialized_version_returns_revision_not_materialize
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id = await _create_app(client, headers, name="Publish Missing Dist App", agent_id=str(agent.id))
+    await _seed_initial_revision_for_app(
+        db_session,
+        app_id=app_id,
+        user_id=user.id,
+    )
 
     state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
     assert state_resp.status_code == 200
@@ -374,6 +390,11 @@ async def test_version_preview_runtime_requires_durable_dist(client, db_session,
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id = await _create_app(client, headers, name="Version Runtime App", agent_id=str(agent.id))
+    await _seed_initial_revision_for_app(
+        db_session,
+        app_id=app_id,
+        user_id=user.id,
+    )
 
     state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
     assert state_resp.status_code == 200

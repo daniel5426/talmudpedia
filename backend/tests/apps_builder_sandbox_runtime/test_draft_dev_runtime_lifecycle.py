@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.db.postgres.models.agents import AgentRun, RunStatus
+from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.api.routers import published_apps_admin_files as builder_files_module
 from app.api.routers import published_apps_admin_routes_builder as builder_routes_module
 from app.core.security import get_password_hash
@@ -39,7 +39,7 @@ from app.services.published_app_live_preview import (
     build_canonical_workspace_fingerprint,
     build_live_preview_overlay_workspace_fingerprint,
 )
-from app.services.published_app_templates import TemplateRuntimeContext
+from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
 from app.services.published_app_versioning import create_app_version
 from app.services.security_bootstrap_service import SecurityBootstrapService
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
@@ -93,8 +93,10 @@ async def _seed_builder_app_and_revision(
     user_id,
     name: str,
 ):
+    project_id = await db_session.scalar(select(Agent.project_id).where(Agent.id == UUID(str(agent_id))))
     app = PublishedApp(
         organization_id=organization_id,
+        project_id=project_id,
         agent_id=agent_id,
         name=name,
         public_id=f"app-{uuid4().hex[:10]}",
@@ -721,7 +723,13 @@ async def test_ensure_endpoint_reuses_live_session_without_calling_legacy_ensure
     revision_id = uuid4()
     session_id = uuid4()
     ctx = {"organization_id": organization_id, "user": SimpleNamespace(id=user_id)}
-    app = SimpleNamespace(id=app_id, organization_id=organization_id, public_id="delete-sync-app", agent_id=uuid4())
+    app = SimpleNamespace(
+        id=app_id,
+        organization_id=organization_id,
+        public_id="delete-sync-app",
+        agent_id=uuid4(),
+        current_draft_revision_id=revision_id,
+    )
     revision = SimpleNamespace(id=revision_id)
     session = SimpleNamespace(id=session_id)
     db = AsyncMock()
@@ -755,7 +763,7 @@ async def test_ensure_endpoint_reuses_live_session_without_calling_legacy_ensure
     monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda resolved_ctx: None)
     monkeypatch.setattr(builder_routes_module, "_assert_no_active_coding_run_for_scope", AsyncMock(return_value=None))
     monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", AsyncMock(return_value=app))
-    monkeypatch.setattr(builder_routes_module, "_ensure_current_draft_revision", AsyncMock(return_value=revision))
+    monkeypatch.setattr(builder_routes_module, "_get_revision", AsyncMock(return_value=revision))
     monkeypatch.setattr(
         runtime_module.PublishedAppDraftDevRuntimeService,
         "ensure_active_session",
@@ -847,7 +855,16 @@ async def test_sync_route_batches_operations_into_single_workspace_sync(
         client=fake_client,
         record_workspace_live_snapshot=AsyncMock(return_value=None),
         record_live_workspace_revision_token=AsyncMock(return_value=session),
-        record_live_workspace_materialization_request=AsyncMock(return_value=None),
+        bind_session_to_revision_without_sync=AsyncMock(return_value=session),
+    )
+    saved_revision = SimpleNamespace(id=uuid4())
+    fake_materializer = SimpleNamespace(
+        materialize_live_workspace=AsyncMock(
+            return_value=SimpleNamespace(
+                revision=saved_revision,
+                reused=False,
+            )
+        )
     )
 
     monkeypatch.setattr(builder_routes_module, "_resolve_organization_admin_context", AsyncMock(return_value=ctx))
@@ -857,6 +874,7 @@ async def test_sync_route_batches_operations_into_single_workspace_sync(
     monkeypatch.setattr(builder_routes_module, "_ensure_current_draft_revision", AsyncMock(return_value=revision))
     monkeypatch.setattr(builder_routes_module, "_get_draft_dev_session_for_scope", AsyncMock(return_value=session))
     monkeypatch.setattr(builder_routes_module, "PublishedAppDraftDevRuntimeService", lambda db: fake_runtime_service)
+    monkeypatch.setattr(builder_routes_module, "PublishedAppDraftRevisionMaterializerService", lambda db: fake_materializer)
     monkeypatch.setattr(
         builder_routes_module,
         "_decorate_draft_dev_session_response",
@@ -887,6 +905,18 @@ async def test_sync_route_batches_operations_into_single_workspace_sync(
     fake_client.resolve_local_workspace_path.assert_not_awaited()
     fake_runtime_service.record_workspace_live_snapshot.assert_awaited_once()
     fake_runtime_service.record_live_workspace_revision_token.assert_awaited_once()
+    fake_materializer.materialize_live_workspace.assert_awaited_once_with(
+        app=app,
+        entry_file="src/App.tsx",
+        source_revision_id=revision_id,
+        created_by=user_id,
+        origin_kind="manual_save",
+    )
+    fake_runtime_service.bind_session_to_revision_without_sync.assert_awaited_once_with(
+        app_id=app_id,
+        user_id=user_id,
+        revision=saved_revision,
+    )
     db.commit.assert_awaited_once()
 
 
@@ -933,7 +963,6 @@ async def test_sync_route_validates_operations_before_mutating_runtime(
         client=fake_client,
         record_workspace_live_snapshot=AsyncMock(return_value=None),
         record_live_workspace_revision_token=AsyncMock(return_value=session),
-        record_live_workspace_materialization_request=AsyncMock(return_value=None),
     )
 
     monkeypatch.setattr(builder_routes_module, "_resolve_organization_admin_context", AsyncMock(return_value=ctx))
@@ -964,7 +993,7 @@ async def test_sync_route_validates_operations_before_mutating_runtime(
 
 
 @pytest.mark.asyncio
-async def test_sync_route_records_saved_workspace_fingerprint_and_pending_materialization(
+async def test_sync_route_materializes_manual_save_directly_from_synced_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ):
     organization_id = uuid4()
@@ -1011,7 +1040,16 @@ async def test_sync_route_records_saved_workspace_fingerprint_and_pending_materi
     fake_runtime_service = SimpleNamespace(
         sync_session=AsyncMock(return_value=session),
         record_workspace_live_snapshot=AsyncMock(return_value=None),
-        record_live_workspace_materialization_request=AsyncMock(return_value=None),
+        bind_session_to_revision_without_sync=AsyncMock(return_value=session),
+    )
+    saved_revision = SimpleNamespace(id=uuid4())
+    fake_materializer = SimpleNamespace(
+        materialize_live_workspace=AsyncMock(
+            return_value=SimpleNamespace(
+                revision=saved_revision,
+                reused=False,
+            )
+        )
     )
 
     monkeypatch.setattr(builder_routes_module, "_resolve_organization_admin_context", AsyncMock(return_value=ctx))
@@ -1021,6 +1059,7 @@ async def test_sync_route_records_saved_workspace_fingerprint_and_pending_materi
     monkeypatch.setattr(builder_routes_module, "_ensure_current_draft_revision", AsyncMock(return_value=revision))
     monkeypatch.setattr(builder_routes_module, "_get_draft_dev_session_for_scope", AsyncMock(return_value=session))
     monkeypatch.setattr(builder_routes_module, "PublishedAppDraftDevRuntimeService", lambda db: fake_runtime_service)
+    monkeypatch.setattr(builder_routes_module, "PublishedAppDraftRevisionMaterializerService", lambda db: fake_materializer)
     monkeypatch.setattr(
         builder_routes_module,
         "_decorate_draft_dev_session_response",
@@ -1049,11 +1088,17 @@ async def test_sync_route_records_saved_workspace_fingerprint_and_pending_materi
         revision_token="rev-token-2",
         workspace_fingerprint=expected_fingerprint,
     )
-    fake_runtime_service.record_live_workspace_materialization_request.assert_awaited_once_with(
-        app_id=app_id,
-        origin_kind="manual_save",
+    fake_materializer.materialize_live_workspace.assert_awaited_once_with(
+        app=app,
+        entry_file=revision.entry_file,
         source_revision_id=revision_id,
         created_by=user_id,
+        origin_kind="manual_save",
+    )
+    fake_runtime_service.bind_session_to_revision_without_sync.assert_awaited_once_with(
+        app_id=app_id,
+        user_id=user_id,
+        revision=saved_revision,
     )
     db.commit.assert_awaited_once()
 
@@ -1179,250 +1224,6 @@ async def test_heartbeat_preserves_live_workspace_snapshot_metadata(
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_does_not_materialize_saved_workspace_when_live_preview_ready(
-    db_session,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    fake_client = _FakeSpriteRuntimeClient()
-
-    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
-    monkeypatch.setattr(
-        runtime_module.PublishedAppDraftDevRuntimeClient,
-        "from_env",
-        classmethod(lambda cls: fake_client),
-    )
-
-    app, current_revision = await _seed_builder_app_and_revision(
-        db_session,
-        organization_id=tenant.id,
-        agent_id=agent.id,
-        user_id=user.id,
-        name="Heartbeat Materialize App",
-    )
-    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
-    session = await runtime_service.ensure_session(
-        app=app,
-        revision=current_revision,
-        user_id=user.id,
-        files=dict(current_revision.files or {}),
-        entry_file=current_revision.entry_file,
-    )
-    await db_session.commit()
-    session_id = session.id
-
-    saved_files = {
-        **dict(current_revision.files or {}),
-        "src/App.tsx": "export default function App() { return <main>saved-workspace</main>; }",
-    }
-    expected_fingerprint = build_live_preview_overlay_workspace_fingerprint(
-        entry_file=current_revision.entry_file,
-        files=saved_files,
-        runtime_context=TemplateRuntimeContext(
-            app_id=str(app.id),
-            app_public_id=str(app.public_id or ""),
-            agent_id=str(app.agent_id or ""),
-        ),
-    )
-
-    await runtime_service.record_workspace_live_snapshot(
-        app_id=app.id,
-        revision_id=current_revision.id,
-        entry_file=current_revision.entry_file,
-        files=saved_files,
-        revision_token="saved-rev-token",
-        workspace_fingerprint=expected_fingerprint,
-    )
-    await runtime_service.record_live_workspace_materialization_request(
-        app_id=app.id,
-        origin_kind="manual_save",
-        source_revision_id=current_revision.id,
-        created_by=user.id,
-    )
-
-    materialized_revision = await create_app_version(
-        db_session,
-        app=app,
-        kind=PublishedAppRevisionKind.draft,
-        template_key=app.template_key,
-        entry_file=current_revision.entry_file,
-        files=saved_files,
-        created_by=user.id,
-        source_revision_id=current_revision.id,
-        origin_kind="manual_save",
-        build_status=PublishedAppRevisionBuildStatus.succeeded,
-        dist_storage_prefix=f"published-apps/test/{uuid4()}/dist",
-        dist_manifest={"source_fingerprint": expected_fingerprint},
-        template_runtime="vite_static",
-    )
-    await db_session.commit()
-
-    async def _heartbeat_with_ready_preview(**kwargs):
-        payload = await _FakeSpriteRuntimeClient.heartbeat_session(fake_client, **kwargs)
-        backend_metadata = dict(payload.get("backend_metadata") or {})
-        backend_metadata["live_preview"] = {
-            "status": "ready",
-            "workspace_fingerprint": expected_fingerprint,
-            "last_successful_build_id": "build-2",
-            "dist_path": "/home/sprite/.talmudpedia/live-preview/current",
-        }
-        payload["backend_metadata"] = backend_metadata
-        return payload
-
-    fake_client.heartbeat_session = _heartbeat_with_ready_preview
-
-    materialize_calls: list[dict[str, object]] = []
-
-    async def _materialize_stub(self, *, app, **kwargs):
-        materialize_calls.append({"app_id": str(app.id), **kwargs})
-        return SimpleNamespace(
-            revision=materialized_revision,
-            reused=False,
-            source_fingerprint=expected_fingerprint,
-            workspace_revision_token="saved-rev-token",
-        )
-
-    monkeypatch.setattr(
-        "app.services.published_app_draft_revision_materializer.PublishedAppDraftRevisionMaterializerService.materialize_live_workspace",
-        _materialize_stub,
-    )
-
-    session = await runtime_service.heartbeat_session(session=session)
-    await db_session.commit()
-    assert session.revision_id == current_revision.id
-
-    await db_session.refresh(app)
-    assert app.current_draft_revision_id == current_revision.id
-
-    session = await db_session.get(PublishedAppDraftDevSession, session_id)
-    assert session is not None
-    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
-    assert workspace is not None
-    assert session.revision_id == current_revision.id
-    assert materialize_calls == []
-
-
-@pytest.mark.asyncio
-async def test_heartbeat_does_not_materialize_live_preview_without_explicit_request(
-    db_session,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    fake_client = _FakeSpriteRuntimeClient()
-
-    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
-    monkeypatch.setattr(
-        runtime_module.PublishedAppDraftDevRuntimeClient,
-        "from_env",
-        classmethod(lambda cls: fake_client),
-    )
-
-    app, current_revision = await _seed_builder_app_and_revision(
-        db_session,
-        organization_id=tenant.id,
-        agent_id=agent.id,
-        user_id=user.id,
-        name="Heartbeat Auto Materialize App",
-    )
-    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
-    session = await runtime_service.ensure_session(
-        app=app,
-        revision=current_revision,
-        user_id=user.id,
-        files=dict(current_revision.files or {}),
-        entry_file=current_revision.entry_file,
-    )
-    await db_session.commit()
-    session_id = session.id
-
-    edited_files = {
-        **dict(current_revision.files or {}),
-        "src/App.tsx": "export default function App() { return <main>auto-materialized</main>; }",
-    }
-    expected_fingerprint = build_live_preview_overlay_workspace_fingerprint(
-        entry_file=current_revision.entry_file,
-        files=edited_files,
-        runtime_context=TemplateRuntimeContext(
-            app_id=str(app.id),
-            app_public_id=str(app.public_id or ""),
-            agent_id=str(app.agent_id or ""),
-        ),
-    )
-
-    await runtime_service.record_workspace_live_snapshot(
-        app_id=app.id,
-        revision_id=current_revision.id,
-        entry_file=current_revision.entry_file,
-        files=edited_files,
-        revision_token="auto-rev-token",
-        workspace_fingerprint=expected_fingerprint,
-    )
-
-    materialized_revision = await create_app_version(
-        db_session,
-        app=app,
-        kind=PublishedAppRevisionKind.draft,
-        template_key=app.template_key,
-        entry_file=current_revision.entry_file,
-        files=edited_files,
-        created_by=user.id,
-        source_revision_id=current_revision.id,
-        origin_kind="live_preview",
-        build_status=PublishedAppRevisionBuildStatus.succeeded,
-        dist_storage_prefix=f"published-apps/test/{uuid4()}/dist",
-        dist_manifest={"source_fingerprint": expected_fingerprint},
-        template_runtime="vite_static",
-    )
-    await db_session.commit()
-
-    async def _heartbeat_with_ready_preview(**kwargs):
-        payload = await _FakeSpriteRuntimeClient.heartbeat_session(fake_client, **kwargs)
-        backend_metadata = dict(payload.get("backend_metadata") or {})
-        backend_metadata["live_preview"] = {
-            "status": "ready",
-            "workspace_fingerprint": expected_fingerprint,
-            "debug_last_trigger_revision_token": "auto-rev-token",
-            "last_successful_build_id": "build-auto",
-            "dist_path": "/home/sprite/.talmudpedia/live-preview/current",
-        }
-        payload["backend_metadata"] = backend_metadata
-        return payload
-
-    fake_client.heartbeat_session = _heartbeat_with_ready_preview
-
-    materialize_calls: list[dict[str, object]] = []
-
-    async def _materialize_stub(self, *, app, **kwargs):
-        materialize_calls.append({"app_id": str(app.id), **kwargs})
-        return SimpleNamespace(
-            revision=materialized_revision,
-            reused=False,
-            source_fingerprint=expected_fingerprint,
-            workspace_revision_token="auto-rev-token",
-        )
-
-    monkeypatch.setattr(
-        "app.services.published_app_draft_revision_materializer.PublishedAppDraftRevisionMaterializerService.materialize_live_workspace",
-        _materialize_stub,
-    )
-
-    session = await runtime_service.heartbeat_session(session=session)
-    await db_session.commit()
-    assert session.revision_id == current_revision.id
-
-    await db_session.refresh(app)
-    assert app.current_draft_revision_id == current_revision.id
-
-    session = await db_session.get(PublishedAppDraftDevSession, session_id)
-    assert session is not None
-    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
-    assert workspace is not None
-    assert "live_workspace_materialization" not in dict(session.backend_metadata or {})
-    assert "live_workspace_materialization" not in dict(workspace.backend_metadata or {})
-    assert materialize_calls == []
-
-
-@pytest.mark.asyncio
 async def test_materializer_reuses_current_revision_when_workspace_build_is_unchanged(
     db_session,
 ):
@@ -1487,6 +1288,7 @@ async def test_materializer_reuses_current_revision_when_workspace_build_is_unch
         build_result=SimpleNamespace(
             build=workspace_build,
             reused=True,
+            source_files={"src/main.tsx": "console.log('same')\n"},
             source_fingerprint=workspace_fingerprint,
             workspace_revision_token="rev-token-1",
         ),

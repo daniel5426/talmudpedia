@@ -6,13 +6,16 @@ from app.graph_authoring import artifact_node_spec
 from app.api.routers.agents import NodeSchemaRequest, get_node_schemas
 from app.graph_authoring import rag_catalog_item, rag_instance_contract, rag_node_spec
 from app.agent.executors.standard import register_standard_operators
+from app.db.postgres.models.rag import PipelineType
 from app.rag.pipeline.registry import (
     ConfigFieldSpec,
     ConfigFieldType,
     DataType,
+    OperatorRegistry,
     OperatorCategory,
     OperatorSpec,
 )
+from app.services.control_plane.rag_admin_service import RagAdminService
 
 
 def test_rag_operator_schema_payload_exposes_canonical_authoring_contract():
@@ -65,10 +68,10 @@ def test_rag_operator_schema_payload_exposes_canonical_authoring_contract():
     }
     assert payload["normalization_defaults"] == {"batch_size": 32}
     assert rag_catalog_item(spec).required_config_fields == []
-    assert rag_instance_contract()["required_fields"] == ["name", "nodes", "edges"]
-    assert rag_instance_contract()["optional_fields"] == ["description", "pipeline_type"]
+    assert rag_instance_contract()["required_fields"] == ["name", "pipeline_type", "nodes", "edges"]
+    assert rag_instance_contract()["optional_fields"] == ["description"]
     assert "org_unit_id" not in rag_instance_contract()["top_level_schema"]["properties"]
-    assert rag_instance_contract()["top_level_schema"]["required"] == ["name", "nodes", "edges"]
+    assert rag_instance_contract()["top_level_schema"]["required"] == ["name", "pipeline_type", "nodes", "edges"]
     assert rag_instance_contract()["node_required_fields"] == ["id", "operator", "position", "category"]
 
 
@@ -132,6 +135,27 @@ def test_rag_operator_schema_exposes_union_shape_for_web_crawler_start_urls():
         {"type": "string"},
         {"type": "array", "items": {"type": "string"}},
     ]
+
+
+def test_rag_operator_pipeline_type_filter_matches_catalog_intent():
+    registry = OperatorRegistry.get_instance()
+
+    assert RagAdminService._operator_allowed_for_pipeline_type(
+        registry.get("web_crawler"),
+        PipelineType.INGESTION,
+    )
+    assert not RagAdminService._operator_allowed_for_pipeline_type(
+        registry.get("web_crawler"),
+        PipelineType.RETRIEVAL,
+    )
+    assert RagAdminService._operator_allowed_for_pipeline_type(
+        registry.get("query_input"),
+        PipelineType.RETRIEVAL,
+    )
+    assert not RagAdminService._operator_allowed_for_pipeline_type(
+        registry.get("query_input"),
+        PipelineType.INGESTION,
+    )
 
 
 @pytest.mark.asyncio

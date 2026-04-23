@@ -15,11 +15,14 @@ class RagAPI:
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    def get_operator_catalog(self, organization_id: Optional[str] = None) -> ResponseEnvelope:
-        return self._client.request("GET", "/admin/pipelines/catalog", params=_organization_params(organization_id))
+    def get_operator_catalog(self, pipeline_type: str, organization_id: Optional[str] = None) -> ResponseEnvelope:
+        params = _organization_params(organization_id)
+        params["pipeline_type"] = pipeline_type
+        return self._client.request("GET", "/admin/pipelines/catalog", params=params)
 
     def get_operator_schemas(
         self,
+        pipeline_type: str,
         operator_ids: list[str],
         organization_id: Optional[str] = None,
     ) -> ResponseEnvelope:
@@ -27,7 +30,7 @@ class RagAPI:
             "POST",
             "/admin/pipelines/operators/schema",
             params=_organization_params(organization_id),
-            json_body={"operator_ids": list(operator_ids or [])},
+            json_body={"pipeline_type": pipeline_type, "operator_ids": list(operator_ids or [])},
         )
 
     def list_visual_pipelines(

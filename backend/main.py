@@ -941,7 +941,7 @@ app.add_middleware(PublishedAppsCORSMiddleware)
 # Registered after CORS so it runs first for app-host requests.
 app.add_middleware(PublishedAppsHostRuntimeMiddleware)
 
-from app.api.routers import auth, general, search, stt, texts, library, admin, tts, rag_admin, workos_webhooks
+from app.api.routers import auth, general, search, stt, texts, library, admin, tts, workos_webhooks
 from app.api.routers.agents import router as agents_router
 from app.api.routers import agent_run_logs as agent_run_logs_router
 from app.api.routers import agent_graph_mutations as agent_graph_mutations_router
@@ -981,7 +981,6 @@ app.include_router(agent_tool_exports_router.router)
 app.include_router(agent_run_logs_router.router)
 app.include_router(agent_graph_mutations_router.router)
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
-app.include_router(rag_admin.router, prefix="/admin/rag", tags=["rag-admin"])
 app.include_router(rag_pipelines_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
 app.include_router(rag_graph_mutations_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
 app.include_router(rag_operator_contracts_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])

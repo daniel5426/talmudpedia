@@ -53,11 +53,17 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "rag.operators.catalog": {
                 "mutation": False,
-                "payload_schema": _payload_schema(properties={}, additional_properties=False),
+                "payload_schema": _payload_schema(
+                    properties={
+                        "pipeline_type": {"type": "string", "enum": ["ingestion", "retrieval"]},
+                    },
+                    required=["pipeline_type"],
+                    additional_properties=False,
+                ),
                 "contract": {
-                    "summary": "List available RAG operators with categories, summaries, and required fields.",
-                    "required_fields": [],
-                    "example_payload": {},
+                    "summary": "List available RAG operators for one pipeline type with categories, summaries, and required fields.",
+                    "required_fields": ["pipeline_type"],
+                    "example_payload": {"pipeline_type": "retrieval"},
                     "failure_codes": ["UNAUTHORIZED", "ORGANIZATION_MISMATCH"],
                 },
             },
@@ -65,15 +71,16 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "mutation": False,
                 "payload_schema": _payload_schema(
                     properties={
+                        "pipeline_type": {"type": "string", "enum": ["ingestion", "retrieval"]},
                         "operator_ids": {"type": "array", "items": {"type": "string"}},
                     },
-                    required=["operator_ids"],
+                    required=["pipeline_type", "operator_ids"],
                     additional_properties=False,
                 ),
                 "contract": {
-                    "summary": "Resolve schemas/contracts for multiple RAG operators in one call, including config schema and exact visual-node/create contract shape.",
-                    "required_fields": ["operator_ids"],
-                    "example_payload": {"operator_ids": ["query_input", "knowledge_store_lookup"]},
+                    "summary": "Resolve schemas/contracts for multiple RAG operators in one call for one pipeline type, including config schema and exact visual-node/create contract shape.",
+                    "required_fields": ["pipeline_type", "operator_ids"],
+                    "example_payload": {"pipeline_type": "retrieval", "operator_ids": ["query_input", "knowledge_store_lookup"]},
                     "failure_codes": ["UNAUTHORIZED", "ORGANIZATION_MISMATCH", "VALIDATION_ERROR"],
                 },
             },
@@ -115,12 +122,12 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                         "nodes": {"type": "array", "items": {"type": "object"}},
                         "edges": {"type": "array", "items": {"type": "object"}},
                     },
-                    required=["name", "nodes", "edges"],
+                    required=["name", "pipeline_type", "nodes", "edges"],
                     additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Create a draft visual RAG pipeline.",
-                    "required_fields": ["name", "nodes", "edges"],
+                    "required_fields": ["name", "pipeline_type", "nodes", "edges"],
                     "example_payload": {
                         "name": "FAQ Pipeline",
                         "pipeline_type": "retrieval",
@@ -153,7 +160,6 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                             "id": {"type": "string"},
                             "name": {"type": "string"},
                             "description": {"type": "string"},
-                            "pipeline_type": {"type": "string", "enum": ["ingestion", "retrieval"]},
                             "nodes": {"type": "array", "items": {"type": "object"}},
                             "edges": {"type": "array", "items": {"type": "object"}},
                         },
@@ -1370,15 +1376,15 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "Use only exact visible tool names. Never invent aliases like create_agent, jobs.create, register_asset, or list-schema helpers. "
         "Workflow policy: extract intent and constraints, build a short plan, discover node/operator contracts when needed, author the full graph, rely on backend normalization/defaulting for mechanical fields, validate or compile, repair from structured errors, then run or publish only when the objective requires it. "
         "For agent graph discovery use agents.nodes.catalog and agents.nodes.schema only. "
-        "For RAG operator discovery use rag.operators.catalog and rag.operators.schema only. "
+        "For RAG operator discovery use rag.operators.catalog and rag.operators.schema only. Both require pipeline_type and only return operators valid for that pipeline type. "
         "Never use agents.nodes.* for RAG discovery and never invent unsupported actions like rag.nodes.catalog. "
         "Before introducing unfamiliar agent node types, call agents.nodes.catalog first and then agents.nodes.schema for all needed node_types in one call. "
-        "Before introducing unfamiliar RAG operators, call rag.operators.catalog first and then rag.operators.schema for all needed operator_ids in one call. "
+        "Before introducing unfamiliar RAG operators, call rag.operators.catalog first with the intended pipeline_type and then rag.operators.schema with that same pipeline_type for all needed operator_ids in one call. "
         "Graph-first authoring is the default path. Use agents.create for first agent creation and agents.update for graph updates. Use rag.create_visual_pipeline for first pipeline creation and rag.update_visual_pipeline for graph updates. "
         "Do not use shell or helper authoring patterns. Author the actual graph and let the backend normalize defaults. "
         "Never create empty graphs: agents and pipelines must include a minimal working node and edge skeleton. "
         "For agents.create and agents.update, send graph_definition and then use agents.validate as the repair checkpoint. "
-        "For rag.create_visual_pipeline and rag.update_visual_pipeline, send nodes and edges at top level and use rag.compile_visual_pipeline as the repair checkpoint. "
+        "For rag.create_visual_pipeline, send pipeline_type plus nodes and edges at top level. For rag.update_visual_pipeline, send nodes and edges at top level and use rag.compile_visual_pipeline as the repair checkpoint. "
         "For retrieval pipelines, include a retrieval_result output node. vector_search or reranker alone is not a valid final retrieval graph. "
         "For query_input, runtime query text is provided at execution time; do not hardcode placeholder query text into saved retrieval graphs unless the node schema explicitly requires a persisted default. "
         "If validation or compile returns structured errors, repair the graph from those exact paths instead of guessing. "

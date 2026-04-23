@@ -1,6 +1,6 @@
 # Published Apps Spec
 
-Last Updated: 2026-04-20
+Last Updated: 2026-04-23
 
 This document is the canonical product/specification overview for published apps.
 
@@ -51,6 +51,7 @@ The current product does not yet include:
 - Runtime chat surfaces support upload-first attachments for `image`, `document`, and `audio`.
 - Saved draft versions are always durable, watcher-materialized revisions.
 - Publish is pointer-only against an already materialized revision and fails with `REVISION_NOT_MATERIALIZED` when durable dist is missing.
+- Apps Builder preview/version trigger rules are defined canonically in `docs/product-specs/apps_builder_preview_and_versioning_spec.md`.
 
 ## Current Runtime Surface
 

@@ -1,4 +1,6 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -14,6 +16,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppDraftDevSession,
     PublishedAppRevision,
 )
+from app.db.postgres.engine import sessionmaker as db_sessionmaker
 from app.db.postgres.session import get_db
 from app.services.published_app_agent_integration_contract import (
     build_published_app_agent_integration_contract,
@@ -74,6 +77,8 @@ from .published_apps_preview_auth import (
     create_preview_token,
 )
 
+logger = logging.getLogger(__name__)
+
 async def _decorate_draft_dev_session_response(
     *,
     db: AsyncSession,
@@ -101,20 +106,47 @@ async def _decorate_draft_dev_session_response(
     if preview_url.startswith("/"):
         preview_url = f"{_resolve_runtime_api_base_url(request)}{preview_url}"
 
-    effective_revision_id = revision_id or session.revision_id
-    if effective_revision_id is None:
-        return response
-
     preview_token = create_preview_token(
         subject=str(actor_id),
         organization_id=str(app.organization_id),
         app_id=str(app.id),
         preview_target_type=PREVIEW_TARGET_DRAFT_DEV_SESSION,
         preview_target_id=str(session.id),
-        revision_id=str(effective_revision_id),
+        revision_id=str(revision_id or session.revision_id) if (revision_id or session.revision_id) else None,
     )
     response.preview_url = append_preview_runtime_token(preview_url, preview_token)
     return response
+
+
+async def _materialize_initial_app_init_revision_detached(
+    *,
+    app_id: UUID,
+    actor_id: UUID,
+) -> None:
+    async with db_sessionmaker() as task_db:
+        try:
+            app = await task_db.get(PublishedApp, app_id)
+            if app is None or app.current_draft_revision_id is not None:
+                return
+            _, entry_file = _build_initial_template_files(app)
+            materializer = PublishedAppDraftRevisionMaterializerService(task_db)
+            result = await materializer.materialize_live_workspace(
+                app=app,
+                entry_file=entry_file,
+                source_revision_id=None,
+                created_by=actor_id,
+                origin_kind="app_init",
+            )
+            runtime_service = PublishedAppDraftDevRuntimeService(task_db)
+            await runtime_service.bind_session_to_revision_without_sync(
+                app_id=app.id,
+                user_id=actor_id,
+                revision=result.revision,
+            )
+            await task_db.commit()
+        except Exception:
+            await task_db.rollback()
+            logger.exception("APP_INIT detached materialization failed app_id=%s actor_id=%s", app_id, actor_id)
 
 
 async def _delete_runtime_file_if_present(
@@ -176,6 +208,19 @@ async def _delete_runtime_file_if_present(
             status_code=502,
             detail=f"Failed to delete live sandbox file `{path}`: {detail}",
         ) from exc
+
+
+def _build_initial_template_files(app: PublishedApp) -> tuple[dict[str, str], str]:
+    template = get_template(app.template_key)
+    files = build_template_files(
+        app.template_key,
+        runtime_context={
+            "app_id": str(app.id),
+            "app_public_id": app.public_id,
+            "agent_id": str(app.agent_id),
+        },
+    )
+    return files, template.entry_file
 
 
 async def _assert_no_active_coding_run_for_scope(
@@ -355,27 +400,52 @@ async def ensure_builder_draft_dev_session(
     await _assert_no_active_coding_run_for_scope(db=db, app_id=app_id, user_id=actor.id)
 
     app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
-    draft = await _ensure_current_draft_revision(db, app, actor.id)
     runtime_service = PublishedAppDraftDevRuntimeService(db)
+    scheduled_initial_app_init = False
     try:
-        session = await runtime_service.ensure_active_session(
-            app=app,
-            revision=draft,
-            user_id=actor.id,
-            prefer_live_workspace=True,
-            trace_source="builder.ensure_route",
-        )
+        draft = await _get_revision(db, getattr(app, "current_draft_revision_id", None))
+        if draft is None:
+            files, entry_file = _build_initial_template_files(app)
+            await runtime_service.provision_workspace_from_files(
+                app=app,
+                user_id=actor.id,
+                files=files,
+                entry_file=entry_file,
+                trace_source="builder.ensure_route.initial_app_init",
+            )
+            session = await runtime_service.ensure_live_workspace_session(
+                app=app,
+                user_id=actor.id,
+                trace_source="builder.ensure_route.initial_app_init",
+            )
+            scheduled_initial_app_init = True
+        else:
+            session = await runtime_service.ensure_active_session(
+                app=app,
+                revision=draft,
+                user_id=actor.id,
+                prefer_live_workspace=True,
+                trace_source="builder.ensure_route",
+            )
     except PublishedAppDraftDevRuntimeDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    await db.commit()
-    return await _decorate_draft_dev_session_response(
+    response = await _decorate_draft_dev_session_response(
         db=db,
         request=request,
         session=session,
         app=app,
         actor_id=actor.id,
-        revision_id=draft.id,
+        revision_id=draft.id if draft is not None else None,
     )
+    await db.commit()
+    if scheduled_initial_app_init:
+        asyncio.create_task(
+            _materialize_initial_app_init_revision_detached(
+                app_id=app.id,
+                actor_id=actor.id,
+            )
+        )
+    return response
 
 
 @router.patch(
@@ -409,6 +479,7 @@ async def sync_builder_draft_dev_session(
         app_public_id=str(app.public_id or ""),
         agent_id=str(app.agent_id or ""),
     )
+    materialize_entry_file = draft.entry_file
 
     if payload.operations:
         sandbox_id = str(session.sandbox_id or "").strip()
@@ -455,6 +526,7 @@ async def sync_builder_draft_dev_session(
             files=next_files,
             runtime_context=runtime_context,
         )
+        materialize_entry_file = next_entry_file
 
         await runtime_service.record_workspace_live_snapshot(
             app_id=app.id,
@@ -503,6 +575,7 @@ async def sync_builder_draft_dev_session(
             files=files,
             runtime_context=runtime_context,
         )
+        materialize_entry_file = entry_file
         await runtime_service.record_workspace_live_snapshot(
             app_id=app.id,
             revision_id=session.revision_id or draft.id,
@@ -512,12 +585,32 @@ async def sync_builder_draft_dev_session(
             workspace_fingerprint=workspace_fingerprint,
         )
 
-    await runtime_service.record_live_workspace_materialization_request(
+    materializer = PublishedAppDraftRevisionMaterializerService(db)
+    try:
+        result = await materializer.materialize_live_workspace(
+            app=app,
+            entry_file=materialize_entry_file,
+            source_revision_id=draft.id,
+            created_by=actor.id,
+            origin_kind="manual_save",
+        )
+    except PublishedAppDraftRevisionMaterializerError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MANUAL_SAVE_BUILD_FAILED",
+                "message": "Manual save could not materialize a durable draft revision from watcher output.",
+                "reason": str(exc),
+            },
+        ) from exc
+
+    rebound = await runtime_service.bind_session_to_revision_without_sync(
         app_id=app.id,
-        origin_kind="manual_save",
-        source_revision_id=draft.id,
-        created_by=actor.id,
+        user_id=actor.id,
+        revision=result.revision,
     )
+    if rebound is not None:
+        session = rebound
 
     await db.commit()
     return await _decorate_draft_dev_session_response(
@@ -526,7 +619,7 @@ async def sync_builder_draft_dev_session(
         session=session,
         app=app,
         actor_id=actor.id,
-        revision_id=draft.id,
+        revision_id=result.revision.id,
     )
 
 

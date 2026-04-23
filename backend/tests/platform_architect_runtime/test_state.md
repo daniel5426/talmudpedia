@@ -1,6 +1,6 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-04-22
+Last Updated: 2026-04-23
 
 ## Scope
 - Platform Architect action-level tool surface and native backend dispatch wiring.
@@ -18,6 +18,7 @@ Last Updated: 2026-04-22
 - Seeded architect prompt now forbids `action` / `payload` wrappers for platform action tools because each mounted tool fixes its own action id.
 - Action-tool schemas are direct-field tool contracts and no longer require model-authored `action` or nested `payload`.
 - Canonical graph-authoring actions are now clean-cut contracts: `agents.update` and `rag.update_visual_pipeline` no longer expose `patch`, `rag.create_visual_pipeline` no longer accepts `graph_definition`, and `agents.validate` no longer accepts a loose `validation` bag.
+- `rag.create_visual_pipeline` now requires explicit `pipeline_type`, `rag.update_visual_pipeline` no longer exposes `pipeline_type`, and `rag.operators.catalog/schema` now require `pipeline_type` so discovery stays aligned with retrieval vs ingestion builder mode.
 - Native adapter coverage now rejects legacy `patch` / `graph_definition` inputs directly and enforces top-level update-field requirements plus `nodes+edges` pairing for RAG graph updates.
 - Canonical action-tool rows seed as real global system tools whose `builtin_key` is the canonical action id and whose function binding is a generated `platform_action_*` wrapper.
 - Action-level wrapper functions reconstruct the fixed canonical action id and dispatch through the shared native platform runtime.
@@ -190,3 +191,7 @@ Last Updated: 2026-04-22
 ## 2026-04-22 node-contract and architect-rag guidance validation
 - Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/graph_authoring backend/tests/schema_contracts/test_schema_contract_surfaces.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py`
 - Result: PASS (`42 passed, 6 warnings`)
+
+## 2026-04-23 rag-pipeline-type hard-cut validation
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py backend/tests/schema_contracts/test_schema_contract_surfaces.py`
+- Result: PASS (`37 passed, 6 warnings`)

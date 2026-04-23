@@ -116,9 +116,15 @@ def operators_catalog(
     *,
     control_client_factory=control_client,
 ) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    pipeline_type = str(payload.get("pipeline_type") or "").strip()
+    if not pipeline_type:
+        return None, [{"error": "missing_fields", "fields": ["pipeline_type"]}]
     try:
         sdk_client = control_client_factory(client)
-        response = sdk_client.rag.get_operator_catalog(organization_id=payload.get("organization_id"))
+        response = sdk_client.rag.get_operator_catalog(
+            pipeline_type,
+            organization_id=payload.get("organization_id"),
+        )
         data = response.get("data")
         operators = list(data.get("operators") or []) if isinstance(data, dict) else []
         return {"operators": operators}, []
@@ -134,12 +140,19 @@ def operators_schema(
     *,
     control_client_factory=control_client,
 ) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    pipeline_type = str(payload.get("pipeline_type") or "").strip()
     operator_ids = [str(item).strip() for item in list(payload.get("operator_ids") or []) if str(item).strip()]
+    missing_fields: list[str] = []
+    if not pipeline_type:
+        missing_fields.append("pipeline_type")
     if not operator_ids:
-        return None, [{"error": "missing_fields", "fields": ["operator_ids"]}]
+        missing_fields.append("operator_ids")
+    if missing_fields:
+        return None, [{"error": "missing_fields", "fields": missing_fields}]
     try:
         sdk_client = control_client_factory(client)
         response = sdk_client.rag.get_operator_schemas(
+            pipeline_type,
             operator_ids,
             organization_id=payload.get("organization_id"),
         )

@@ -14,17 +14,13 @@ from app.db.postgres.models.published_apps import (
     PublishedAppAccountStatus,
     PublishedAppCustomDomain,
     PublishedAppCustomDomainStatus,
-    PublishedAppRevisionBuildStatus,
-    PublishedAppRevisionKind,
     PublishedAppSession,
     PublishedAppStatus,
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
-from app.services.published_app_templates import build_template_files, get_template, list_templates
+from app.services.published_app_templates import list_templates
 from app.services.published_app_auth_templates import list_auth_templates
-from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
-from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
@@ -133,42 +129,6 @@ async def create_published_app(
     db.add(app)
     try:
         await db.flush()
-
-        template = get_template(template_key)
-        files = build_template_files(
-            template_key,
-            runtime_context={
-                "app_id": str(app.id),
-                "app_public_id": app.public_id,
-                "agent_id": str(app.agent_id),
-            },
-        )
-        revision_files = apply_runtime_bootstrap_overlay(
-            dict(files),
-            runtime_context=TemplateRuntimeContext(
-                app_id=str(app.id),
-                app_public_id=app.public_id,
-                agent_id=str(app.agent_id),
-            ),
-        )
-        revision = await create_app_version(
-            db,
-            app=app,
-            kind=PublishedAppRevisionKind.draft,
-            template_key=app.template_key,
-            entry_file=template.entry_file,
-            files=revision_files,
-            created_by=ctx["user"].id if ctx["user"] else None,
-            source_revision_id=None,
-            origin_kind="app_init",
-            build_status=PublishedAppRevisionBuildStatus.queued,
-            build_seq=1,
-            build_error=None,
-            dist_storage_prefix=None,
-            dist_manifest=None,
-            template_runtime="vite_static",
-        )
-        app.current_draft_revision_id = revision.id
 
         await db.commit()
     except IntegrityError:

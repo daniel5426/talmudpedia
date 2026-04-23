@@ -1,6 +1,6 @@
 # Platform Architect Graph Authoring Direction
 
-Last Updated: 2026-04-22
+Last Updated: 2026-04-23
 
 ## Purpose
 
@@ -149,6 +149,14 @@ The discovery surface is now richer on the schema side:
   - richer shared `instance_contract` details for the surrounding graph payload
 
 This means the architect can now discover not only which nodes/operators exist, but also the minimal canonical node object it should author and which config defaults the backend will safely fill in.
+
+The current RAG pipeline type contract is now stricter:
+
+- `rag.create_visual_pipeline` requires explicit `pipeline_type`
+- `rag.update_visual_pipeline` does not allow `pipeline_type` changes
+- `rag.operators.catalog` and `rag.operators.schema` both require `pipeline_type` and only return operators valid for that type
+
+So retrieval vs ingestion is now an explicit authoring choice at create time, not something inferred from graph shape or switched later through updates.
 
 The remaining deferred work is still deferred:
 

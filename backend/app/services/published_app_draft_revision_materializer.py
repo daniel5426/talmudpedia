@@ -81,6 +81,15 @@ class PublishedAppDraftRevisionMaterializerService:
         origin_run_id: UUID | None,
         restored_from_revision_id: UUID | None = None,
     ) -> MaterializedDraftRevisionResult:
+        template_runtime_context = TemplateRuntimeContext(
+            app_id=str(app.id),
+            app_public_id=str(app.public_id or ""),
+            agent_id=str(app.agent_id or ""),
+        )
+        revision_files = apply_runtime_bootstrap_overlay(
+            dict(build_result.source_files),
+            runtime_context=template_runtime_context,
+        )
         current_revision_id = getattr(app, "current_draft_revision_id", None)
         if current_revision_id is not None:
             current_revision = await self.db.get(PublishedAppRevision, current_revision_id)
@@ -106,16 +115,6 @@ class PublishedAppDraftRevisionMaterializerService:
                     source_fingerprint=build_result.source_fingerprint,
                     workspace_revision_token=build_result.workspace_revision_token,
                 )
-
-        template_runtime_context = TemplateRuntimeContext(
-            app_id=str(app.id),
-            app_public_id=str(app.public_id or ""),
-            agent_id=str(app.agent_id or ""),
-        )
-        revision_files = apply_runtime_bootstrap_overlay(
-            dict(build_result.source_files),
-            runtime_context=template_runtime_context,
-        )
         build_seq = 0
         if source_revision_id is not None:
             source_revision = await self.db.get(PublishedAppRevision, source_revision_id)

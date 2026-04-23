@@ -10,6 +10,7 @@ from app.api.dependencies import get_current_principal, require_scopes
 from app.api.routers.rag_pipelines import get_pipeline_context, sync_custom_operators
 from app.db.postgres.session import get_db
 from app.graph_authoring import rag_instance_contract, rag_node_spec
+from app.db.postgres.models.rag import PipelineType
 from app.rag.pipeline.registry import OperatorRegistry
 from app.services.control_plane.context import ControlPlaneContext
 from app.services.control_plane.errors import ControlPlaneError
@@ -19,6 +20,7 @@ router = APIRouter()
 
 
 class OperatorSchemaRequest(BaseModel):
+    pipeline_type: PipelineType
     operator_ids: list[str] = Field(default_factory=list)
 
 
@@ -42,9 +44,15 @@ async def get_operator_schemas(
         operator_ids = [str(item).strip() for item in (request.operator_ids or []) if str(item).strip()]
         schemas: Dict[str, Dict[str, Any]] = {}
         unknown: list[str] = []
+        normalized_pipeline_type = RagAdminService._normalize_pipeline_type(
+            getattr(request.pipeline_type, "value", request.pipeline_type)
+        )
         for operator_id in operator_ids:
             spec = registry.get(operator_id, organization_id=organization_id)
             if spec is None:
+                unknown.append(operator_id)
+                continue
+            if not RagAdminService._operator_allowed_for_pipeline_type(spec, normalized_pipeline_type):
                 unknown.append(operator_id)
                 continue
             schemas[operator_id] = rag_node_spec(spec).model_dump(mode="json", exclude_none=True)
@@ -59,6 +67,7 @@ async def get_operator_schemas(
                 scopes=tuple(context.get("scopes") or ()),
                 is_service=bool(context.get("type") == "workload"),
             ),
+            pipeline_type=getattr(request.pipeline_type, "value", request.pipeline_type),
             operator_ids=list(request.operator_ids or []),
         )
     except ControlPlaneError as exc:

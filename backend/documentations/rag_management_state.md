@@ -1,5 +1,5 @@
 # RAG Management Current State
-Last Updated: 2026-03-08
+Last Updated: 2026-04-23
 
 ## Overview
 The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pipeline orchestration engine designed to manage the full lifecycle of data ingestion, transformation, and storage for semantic search. It has evolved from a simple linear flow to a highly customizable, contract-driven architecture.
@@ -104,8 +104,8 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
 ### Frontend Stack
 - **Interface**: Next.js with Shadcn/UI and a premium, minimalist design system.
 - **Canvas**: React Flow (XYFlow) for the visual graph editor with muted, pastel category colors.
-- **Management UI**: Dedicated CRUD interfaces for Pipelines and Knowledge Stores.
-- **Logic**: Custom hooks for canvas state management and service-oriented integration with the RAG Admin API.
+- **Management UI**: Direct entry points now center on the Pipeline Builder, Knowledge Stores, and Custom Operators. The legacy `/admin/rag` dashboard page has been removed.
+- **Logic**: Custom hooks for canvas state management and service-oriented integration with the pipeline, knowledge-store, and custom-operator admin APIs.
 
 ## Implementation State (Phase 3 Completed)
 

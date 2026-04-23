@@ -593,7 +593,7 @@ export default function KnowledgeStoresPage() {
             <AdminPageHeader>
                 <div className="flex items-center gap-3">
                     <CustomBreadcrumb items={[
-                        { label: "RAG Management", href: "/admin/rag" },
+                        { label: "Pipeline Builder", href: "/admin/pipelines" },
                         { label: "Knowledge Stores", href: "/admin/rag/knowledge-stores", active: true },
                     ]} />
                 </div>

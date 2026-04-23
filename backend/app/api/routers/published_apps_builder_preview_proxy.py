@@ -510,13 +510,13 @@ async def _load_preview_app_and_revision(
     *,
     db: AsyncSession,
     session: PublishedAppDraftDevSession,
-) -> tuple[PublishedApp, PublishedAppRevision]:
+) -> tuple[PublishedApp, PublishedAppRevision | None]:
     app = await db.get(PublishedApp, session.published_app_id)
     if app is None:
         raise HTTPException(status_code=404, detail="Published app not found")
     revision_id = session.revision_id
     if revision_id is None:
-        raise HTTPException(status_code=404, detail="Preview revision not found")
+        return app, None
     revision = await db.get(PublishedAppRevision, revision_id)
     if revision is None or str(revision.published_app_id) != str(app.id):
         raise HTTPException(status_code=404, detail="Preview revision not found")
@@ -532,14 +532,14 @@ def _build_builder_preview_bootstrap(
     request: Request,
     session: PublishedAppDraftDevSession,
     app: PublishedApp,
-    revision: PublishedAppRevision,
+    revision: PublishedAppRevision | None,
 ) -> RuntimeBootstrapResponse:
     origin = _request_origin_from_base_url(str(request.base_url))
     internal_prefix = _builder_preview_internal_prefix(session_id=str(session.id))
     return RuntimeBootstrapResponse(
         app_id=str(app.id),
         public_id=app.public_id,
-        revision_id=str(revision.id),
+        revision_id=str(revision.id) if revision is not None else None,
         mode="builder-preview",
         api_base_path="/",
         api_base_url=origin,
@@ -1127,7 +1127,7 @@ async def _load_preview_request_context(
     db: AsyncSession,
     request: Request,
     session_id: str,
-) -> tuple[PublishedAppDraftDevSession, PublishedApp, PublishedAppRevision, dict[str, Any], str]:
+) -> tuple[PublishedAppDraftDevSession, PublishedApp, PublishedAppRevision | None, dict[str, Any], str]:
     session = await _load_session(db=db, session_id=session_id)
     token = _extract_preview_token(request=request)
     if not token:

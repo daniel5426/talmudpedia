@@ -90,14 +90,9 @@ const data = {
     },
     {
       title: "RAG Management",
-      url: "/admin/rag",
+      url: "/admin/pipelines",
       icon: Database,
       items: [
-        {
-          title: "Dashboard",
-          url: "/admin/rag",
-          icon: LayoutDashboard,
-        },
         {
           title: "Pipeline Builder",
           url: "/admin/pipelines",
@@ -107,6 +102,11 @@ const data = {
           title: "Knowledge Store",
           url: "/admin/rag/knowledge-stores",
           icon: Database,
+        },
+        {
+          title: "Operators",
+          url: "/admin/rag/operators",
+          icon: Code2,
         },
       ],
     },

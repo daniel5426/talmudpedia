@@ -1,9 +1,9 @@
 import pytest
 from sqlalchemy import select
+from types import SimpleNamespace
 from uuid import UUID
 
-from app.db.postgres.models.published_apps import PublishedAppCustomDomain
-from app.db.postgres.models.published_apps import PublishedAppRevision, PublishedAppRevisionBuildStatus, PublishedAppRevisionKind
+from app.db.postgres.models.published_apps import PublishedApp, PublishedAppCustomDomain
 from ._helpers import admin_headers, install_app_create_stub, seed_admin_tenant_and_agent
 
 
@@ -81,8 +81,7 @@ async def test_admin_apps_crud(client, db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_app_create_materializes_first_draft_revision(client, db_session, monkeypatch):
-    install_app_create_stub(monkeypatch)
+async def test_admin_app_create_returns_no_draft_until_first_real_build(client, db_session):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -102,17 +101,12 @@ async def test_admin_app_create_materializes_first_draft_revision(client, db_ses
 
     state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
     assert state_resp.status_code == 200
-    revision_id = state_resp.json()["current_draft_revision"]["id"]
-    revision = await db_session.get(PublishedAppRevision, UUID(revision_id))
-    assert revision is not None
-    assert revision.build_status == PublishedAppRevisionBuildStatus.succeeded
-    assert revision.workspace_build_id is None or isinstance(revision.workspace_build_id, UUID)
-    assert revision.dist_storage_prefix
-    assert revision.dist_manifest
+    payload = state_resp.json()
+    assert payload["current_draft_revision"] is None
 
 
 @pytest.mark.asyncio
-async def test_admin_app_create_returns_provisional_initial_revision_without_bootstrap(client, db_session):
+async def test_admin_app_ensure_session_bootstraps_live_workspace_without_inline_app_init_revision(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -130,17 +124,88 @@ async def test_admin_app_create_returns_provisional_initial_revision_without_boo
     assert create_resp.status_code == 200
     app_id = create_resp.json()["id"]
 
-    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
-    assert state_resp.status_code == 200
-    payload = state_resp.json()
-    assert payload["draft_dev"] is None
-    revision_id = payload["current_draft_revision"]["id"]
-    revision = await db_session.get(PublishedAppRevision, UUID(revision_id))
-    assert revision is not None
-    assert revision.build_status == PublishedAppRevisionBuildStatus.queued
-    assert revision.origin_kind == "app_init"
-    assert revision.dist_storage_prefix is None
-    assert revision.dist_manifest is None
+    async def _provision_workspace(self, *, app, user_id, files, entry_file, trace_source=None):
+        _ = self, app, user_id, files, entry_file, trace_source
+        return None
+
+    async def _ensure_live_workspace_session(self, *, app, user_id, trace_source=None):
+        _ = self, app, trace_source
+        return type(
+            "Session",
+            (),
+            {
+                "id": UUID("00000000-0000-0000-0000-000000000001"),
+                "published_app_id": app.id,
+                "user_id": user_id,
+                "revision_id": None,
+                "status": "serving",
+                "preview_url": "/preview/session-1",
+                "last_error": None,
+                "active_coding_run_count": 0,
+                "preview_transport_generation": 1,
+                "workspace_revision_token": None,
+                "live_preview": None,
+                "live_workspace_snapshot": None,
+                "backend_metadata": {},
+                "draft_workspace_id": None,
+                "sandbox_id": None,
+                "runtime_generation": 1,
+            },
+        )()
+
+    async def _decorate(*, db, request, session, app, actor_id, revision_id):
+        _ = db, request, actor_id
+        return {
+            "session_id": str(session.id),
+            "app_id": str(app.id),
+            "revision_id": str(revision_id) if revision_id else None,
+            "status": "serving",
+            "runtime_backend": "sprite",
+            "has_active_coding_runs": False,
+            "active_coding_run_count": 0,
+            "preview_url": session.preview_url,
+            "last_error": None,
+            "preview_transport_generation": 1,
+            "workspace_revision_token": None,
+            "live_preview": None,
+            "live_workspace_snapshot": None,
+        }
+
+    scheduled: list[object] = []
+
+    def _fake_create_task(coro):
+        scheduled.append(coro)
+        coro.close()
+        return SimpleNamespace(cancel=lambda: None)
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin_routes_builder.PublishedAppDraftDevRuntimeService.provision_workspace_from_files",
+        _provision_workspace,
+    )
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin_routes_builder.PublishedAppDraftDevRuntimeService.ensure_live_workspace_session",
+        _ensure_live_workspace_session,
+    )
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin_routes_builder._decorate_draft_dev_session_response",
+        _decorate,
+    )
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin_routes_builder.asyncio.create_task",
+        _fake_create_task,
+    )
+
+    ensure_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/draft-dev/session/ensure",
+        headers=headers,
+        json={},
+    )
+    assert ensure_resp.status_code == 200
+    assert ensure_resp.json()["revision_id"] is None
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+    assert app.current_draft_revision_id is None
+    assert scheduled
 
 
 @pytest.mark.asyncio

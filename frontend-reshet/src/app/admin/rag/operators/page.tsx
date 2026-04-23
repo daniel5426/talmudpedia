@@ -872,7 +872,7 @@ export default function OperatorsPage() {
                     )}
                     <CustomBreadcrumb
                         items={[
-                            { label: "RAG Management", href: "/admin/rag" },
+                            { label: "Pipeline Builder", href: "/admin/pipelines" },
                             { label: "Operators", href: "/admin/rag/operators", active: viewMode === "list" },
                             ...(viewMode === "create" ? [{ label: "New Operator", active: true }] : []),
                             ...(viewMode === "edit"

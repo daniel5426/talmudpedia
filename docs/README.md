@@ -59,6 +59,7 @@ Most existing long-form documentation still lives in `backend/documentations/`. 
 - `docs/design-docs/platform_architect_graph_authoring_direction.md`
 - `docs/design-docs/unified_preview_auth_contract.md`
 - `docs/product-specs/published_apps_spec.md`
+- `docs/product-specs/apps_builder_preview_and_versioning_spec.md`
 - `docs/product-specs/embedded_agent_runtime_spec.md`
 - `docs/product-specs/settings_hub_spec.md`
 - `docs/product-specs/organization_and_project_workflow_spec.md`

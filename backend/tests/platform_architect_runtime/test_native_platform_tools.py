@@ -290,6 +290,7 @@ async def test_rag_create_visual_pipeline_accepts_top_level_nodes_and_edges(monk
         _runtime(
             {
                 "name": "FAQ Pipeline",
+                "pipeline_type": "retrieval",
                 "nodes": [{"id": "n1"}],
                 "edges": [{"id": "e1", "source": "n1", "target": "n2"}],
             }
@@ -297,6 +298,7 @@ async def test_rag_create_visual_pipeline_accepts_top_level_nodes_and_edges(monk
     )
 
     assert result["status"] == "created"
+    assert captured["params"].pipeline_type == "retrieval"
     assert captured["params"].nodes == [{"id": "n1"}]
     assert captured["params"].edges == [{"id": "e1", "source": "n1", "target": "n2"}]
 
@@ -314,6 +316,22 @@ async def test_rag_create_visual_pipeline_rejects_legacy_graph_definition():
         )
 
     assert exc_info.value.to_payload()["details"]["errors"][0]["code"] == "LEGACY_FIELD_NOT_ALLOWED"
+
+
+@pytest.mark.asyncio
+async def test_rag_create_visual_pipeline_rejects_missing_pipeline_type():
+    with pytest.raises(ControlPlaneError) as exc_info:
+        await native_rag.rag_create_visual_pipeline(
+            _runtime(
+                {
+                    "name": "FAQ Pipeline",
+                    "nodes": [{"id": "n1"}],
+                    "edges": [{"id": "e1", "source": "n1", "target": "n2"}],
+                }
+            )
+        )
+
+    assert exc_info.value.to_payload()["details"]["field"] == "pipeline_type"
 
 
 @pytest.mark.asyncio
@@ -343,6 +361,47 @@ async def test_rag_update_visual_pipeline_accepts_direct_top_level_fields(monkey
     assert captured["params"].description == "updated"
     assert captured["params"].nodes == [{"id": "n1"}]
     assert captured["params"].edges == [{"id": "e1", "source": "n1", "target": "n2"}]
+    assert not hasattr(captured["params"], "pipeline_type")
+
+
+@pytest.mark.asyncio
+async def test_rag_operators_catalog_passes_required_pipeline_type(monkeypatch):
+    captured = {}
+
+    async def fake_catalog(self, *, ctx, pipeline_type):
+        captured["ctx"] = ctx
+        captured["pipeline_type"] = pipeline_type
+        return {"operators": []}
+
+    monkeypatch.setattr(native_rag.RagAdminService, "operators_catalog", fake_catalog)
+
+    result = await native_rag.rag_operators_catalog(_runtime({"pipeline_type": "ingestion"}))
+
+    assert result == {"operators": []}
+    assert captured["ctx"].organization_id is not None
+    assert captured["pipeline_type"] == "ingestion"
+
+
+@pytest.mark.asyncio
+async def test_rag_operators_schema_passes_required_pipeline_type(monkeypatch):
+    captured = {}
+
+    async def fake_schema(self, *, ctx, pipeline_type, operator_ids):
+        captured["ctx"] = ctx
+        captured["pipeline_type"] = pipeline_type
+        captured["operator_ids"] = operator_ids
+        return {"specs": {}, "instance_contract": {}}
+
+    monkeypatch.setattr(native_rag.RagAdminService, "operators_schema", fake_schema)
+
+    result = await native_rag.rag_operators_schema(
+        _runtime({"pipeline_type": "retrieval", "operator_ids": ["query_input"]})
+    )
+
+    assert result == {"specs": {}, "instance_contract": {}}
+    assert captured["ctx"].organization_id is not None
+    assert captured["pipeline_type"] == "retrieval"
+    assert captured["operator_ids"] == ["query_input"]
 
 
 @pytest.mark.asyncio

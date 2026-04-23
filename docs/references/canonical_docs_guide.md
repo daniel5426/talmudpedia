@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-04-22
+Last Updated: 2026-04-23
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -54,6 +54,8 @@ This guide lists the current canonical documentation entry points after the firs
 
 - `docs/product-specs/published_apps_spec.md`
   - Published-app product behavior and runtime surface.
+- `docs/product-specs/apps_builder_preview_and_versioning_spec.md`
+  - Canonical Apps Builder preview/versioning contract and trigger rules.
 - `docs/product-specs/embedded_agent_runtime_spec.md`
   - Agent-native external embed/plugin runtime contract.
 - `docs/product-specs/settings_hub_spec.md`

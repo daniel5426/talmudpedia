@@ -36,20 +36,20 @@ export const sidebarContent = {
     },
     {
       title: "RAG Engine",
-      url: "/admin/rag",
+      url: "/admin/pipelines",
       icon: FileSearch,
       items: [
         {
           title: "Pipelines",
-          url: "/admin/rag/pipelines",
+          url: "/admin/pipelines",
+        },
+        {
+          title: "Knowledge Stores",
+          url: "/admin/rag/knowledge-stores",
         },
         {
           title: "Operators",
           url: "/admin/rag/operators",
-        },
-        {
-          title: "Ingestion Jobs",
-          url: "/admin/rag/jobs",
         },
       ],
     },

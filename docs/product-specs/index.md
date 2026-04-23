@@ -1,6 +1,6 @@
 # Product Specs Index
 
-Last Updated: 2026-04-20
+Last Updated: 2026-04-23
 
 This section is for canonical product behavior and user-facing contracts.
 
@@ -23,6 +23,8 @@ This section is for canonical product behavior and user-facing contracts.
 - `backend/documentations/graphspec_v1.md`
 
 ## Current Canonical Docs
+- `apps_builder_preview_and_versioning_spec.md`
+  - Canonical Apps Builder contract for preview, manual save, and draft version creation.
 - `published_apps_spec.md`
   - Current published-app product behavior and runtime contract.
 - `settings_hub_spec.md`

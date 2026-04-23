@@ -273,7 +273,7 @@ class PipelineEdgeRequest(BaseModel):
 class CreatePipelineRequest(BaseModel):
     name: str
     description: Optional[str] = None
-    pipeline_type: PipelineType = PipelineType.INGESTION
+    pipeline_type: PipelineType
     nodes: List[PipelineNodeRequest] = []
     edges: List[PipelineEdgeRequest] = []
     org_unit_id: Optional[UUID] = None
@@ -282,7 +282,6 @@ class CreatePipelineRequest(BaseModel):
 class UpdatePipelineRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    pipeline_type: Optional[PipelineType] = None
     nodes: Optional[List[PipelineNodeRequest]] = None
     edges: Optional[List[PipelineEdgeRequest]] = None
 
@@ -424,6 +423,7 @@ def pipeline_tool_binding_to_dict(pipeline: VisualPipeline, tool) -> Dict[str, A
 
 @router.get("/catalog")
 async def get_operator_catalog(
+    pipeline_type: PipelineType,
     organization_id: Optional[str] = None,
     context: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("pipelines.catalog.read")),
@@ -448,7 +448,10 @@ async def get_operator_catalog(
         is_service=bool(context.get("type") == "workload"),
     )
     try:
-        return await RagAdminService(db).operators_catalog(ctx=control_ctx)
+        return await RagAdminService(db).operators_catalog(
+            ctx=control_ctx,
+            pipeline_type=getattr(pipeline_type, "value", pipeline_type),
+        )
     except ControlPlaneError as exc:
         raise exc.to_http_exception() from exc
 
@@ -710,7 +713,6 @@ async def update_visual_pipeline(
             params=ControlPlaneUpdatePipelineInput(
                 name=request.name,
                 description=request.description,
-                pipeline_type=getattr(request.pipeline_type, "value", request.pipeline_type) if request.pipeline_type is not None else None,
                 nodes=[n.model_dump(mode="json") for n in request.nodes] if request.nodes is not None else None,
                 edges=[e.model_dump(mode="json") for e in request.edges] if request.edges is not None else None,
             ),

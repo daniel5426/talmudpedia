@@ -338,8 +338,6 @@ function buildDraftDevSyncFingerprint(entry: string, nextFiles: Record<string, s
 }
 
 const POST_RUN_PREVIEW_POLL_WINDOW_MS = 90_000;
-const POST_SAVE_REVISION_POLL_WINDOW_MS = 45_000;
-const POST_SAVE_REVISION_POLL_INTERVAL_MS = 2_000;
 
 function logBuilderWorkspaceDebug(event: string, fields: Record<string, unknown> = {}): void {
   if (typeof console === "undefined" || typeof console.info !== "function") {
@@ -413,10 +411,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     until: number;
     baselineBuildId: string | null;
   } | null>(null);
-  const [postSaveRevisionPollState, setPostSaveRevisionPollState] = useState<{
-    until: number;
-    baselineRevisionId: string | null;
-  } | null>(null);
   const saveBlockedByBackendLock = hasActiveCodingRunLock || postRunHydrationPending;
   const [isOpeningApp, setIsOpeningApp] = useState(false);
   const [isExportingArchive, setIsExportingArchive] = useState(false);
@@ -446,16 +440,15 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setPreviewRouteInput("/");
     setPreviewReloadToken(0);
     setPostRunHydrationPending(false);
-    setPostSaveRevisionPollState(null);
     dispatchWorkspace({ type: "reset" });
   }, [appId]);
 
   const syncCurrentRevisionFromDraftDevSession = useCallback((revisionId: string) => {
-    if (currentRevisionId) {
-      return;
-    }
     const normalizedRevisionId = revisionId.trim();
     if (!normalizedRevisionId) return;
+    if (currentRevisionId === normalizedRevisionId) {
+      return;
+    }
     dispatchWorkspace({
       type: "hydrate",
       payload: {
@@ -766,28 +759,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   useEffect(() => {
     void loadExportOptions();
   }, [loadExportOptions]);
-
-  useEffect(() => {
-    if (!postSaveRevisionPollState) {
-      return;
-    }
-    const baselineRevisionId = String(postSaveRevisionPollState.baselineRevisionId || "").trim() || null;
-    const nextRevisionId = String(state?.app.current_draft_revision_id || currentRevisionId || "").trim() || null;
-    if (nextRevisionId && nextRevisionId !== baselineRevisionId) {
-      setPostSaveRevisionPollState(null);
-      return;
-    }
-    if (postSaveRevisionPollState.until <= Date.now()) {
-      setPostSaveRevisionPollState(null);
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void refreshStateSilently();
-    }, POST_SAVE_REVISION_POLL_INTERVAL_MS);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [currentRevisionId, postSaveRevisionPollState, refreshStateSilently, state?.app.current_draft_revision_id]);
 
   const {
     versions,
@@ -1170,15 +1141,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     try {
       await ensureDraftDevSession();
       const session = await syncDraftDevSession({ forceFullSync: true });
-      lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(entryFile, files);
-      if (session) {
-        applyDraftDevSessionToBuilderState(session);
+      if (!session) {
+        throw new Error("Draft preview sandbox was not ready to save. Wait for preview to finish warming and try again.");
       }
-      setPostSaveRevisionPollState({
-        until: Date.now() + POST_SAVE_REVISION_POLL_WINDOW_MS,
-        baselineRevisionId: currentRevisionId,
-      });
-      void refreshStateSilently();
+      lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(entryFile, files);
+      applyDraftDevSessionToBuilderState(session);
+      void Promise.all([refreshStateSilently(), refreshVersions()]);
     } catch (err: any) {
       const detail = err?.message || "Failed to save draft";
       try {
@@ -1195,7 +1163,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [applyDraftDevSessionToBuilderState, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, refreshStateSilently, saveBlockedByBackendLock, syncDraftDevSession]);
+  }, [applyDraftDevSessionToBuilderState, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, refreshStateSilently, refreshVersions, saveBlockedByBackendLock, syncDraftDevSession]);
 
   const publish = useCallback(async () => {
     if (sandboxActionsBlocked) {

@@ -22,6 +22,7 @@ Last Updated: 2026-04-23
 - The draft-dev runtime client delegates `start_session` to the selected Sprite backend and injects the stable preview proxy base path.
 - The draft-dev runtime client can also push live-preview context updates back to the selected sandbox backend after coding-run reconciliation.
 - The preview proxy enforces preview token validation before forwarding to the upstream Sprite URL.
+- The preview proxy can also bootstrap a fresh draft-dev session before any durable draft revision exists; builder preview auth/bootstrap now tolerates `revision_id = null` until the first `app_init` version materializes.
 - The preview proxy strips `runtime_token` from upstream requests, forwards provider-neutral auth headers, and sets the canonical `published_app_preview_token` cookie on successful bootstrap.
 - The preview proxy prefers the preview cookie over a stale bootstrap `runtime_token`, so old iframe URLs cannot override the current session scope after bootstrap.
 - The preview proxy falls back to the bootstrap `runtime_token` when the preview cookie belongs to a different app, so stale cross-app cookies cannot block a fresh session bootstrap.
@@ -51,11 +52,12 @@ Last Updated: 2026-04-23
 - Shared app-level draft workspaces are reused across multiple editors on the same app.
 - Coding-run bootstrap can reuse a healthy live workspace even when the saved draft revision has advanced, instead of forcing a revision-driven resync.
 - The public draft-dev `ensure` route reuses an already-serving live workspace via `ensure_active_session(..., prefer_live_workspace=True)` without issuing a runtime heartbeat first.
+- For fresh apps with no current draft revision, the public draft-dev `ensure` route now provisions the live workspace, attaches a revision-less session immediately, and schedules the first durable `app_init` materialization asynchronously.
 - Draft-dev runtime failures now keep the editor session attached to the shared workspace instead of returning a detached zombie session with `draft_workspace_id = null`.
 - Draft-dev heartbeat can reattach a stale detached session row to the existing shared workspace before checking runtime health.
 - Builder validation now requires a root `index.html`, and incremental sync validates projected patch operations before mutating the live Sprite workspace.
 - Builder `operations` sync now projects the full next workspace and applies it through one `sync_workspace_files()` call, so the watcher never sees a half-written multi-file edit batch.
-- Manual editor sync can still record a pending materialization request, but only explicit triggers (`manual_save`, `coding_run`, `restore`, `template_reset`) may create durable versions.
+- Manual editor sync now uses the same direct watcher-backed materializer path as the other explicit version triggers; it no longer queues deferred save metadata for heartbeat/runtime follow-up.
 - Coding-run finalization now snapshots the final live workspace, compares canonical fingerprints against the source draft revision, and creates at most one `coding_run` version only when the final workspace actually changed.
 - Coding-agent workspace-write detection ignores read-only `bash` probes like `git status`, while still flagging mutating shell commands and explicit write tools.
 - Live-preview build status normalization preserves the canonical `build_watch_static` contract, richer preview states (`booting`, `building`, `ready`, `failed_keep_last_good`, `failed_no_build`, `recovering`), supervisor health metadata, and stable workspace fingerprinting for build reuse.
@@ -74,6 +76,12 @@ Last Updated: 2026-04-23
 - Draft revision materialization reuses the current draft revision when the watcher/build fingerprint is unchanged, so a fresh app no longer creates a duplicate `live_preview` version from the same ready build as `app_init`.
 
 ## Last run command + date/time + result
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'sync_route_batches_operations_into_single_workspace_sync or sync_route_validates_operations_before_mutating_runtime or sync_route_materializes_manual_save_directly_from_synced_workspace or heartbeat_preserves_existing_preview_base_path_when_refresh_returns_root or heartbeat_preserves_live_workspace_snapshot_metadata or ensure_endpoint_reuses_live_session_without_calling_legacy_ensure_session'`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`6 passed, 17 deselected`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && SECRET_KEY=explicit-test-secret backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'materializer_reuses_current_revision_when_workspace_build_is_unchanged'`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`2 passed, 24 deselected`)
 - Command: `SECRET_KEY=explicit-test-secret-0123456789abcdef TEST_USE_REAL_DB=0 /Users/danielbenassaya/Code/personal/talmudpedia/backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
 - Date: 2026-04-19 Asia/Hebron
 - Result: PASS (`12 passed`, `9 warnings`)
@@ -224,9 +232,16 @@ Last Updated: 2026-04-23
 - Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py backend/tests/published_apps/test_public_app_resolve_and_config.py backend/tests/sandbox_controller/test_dev_shim.py backend/tests/sandbox_controller/test_draft_dev_runtime_client_stream.py backend/tests/app_versions/test_versions_endpoints.py`
 - Date: 2026-04-23 Asia/Hebron
 - Result: PASS (`40 passed`). Unified preview-auth contract is covered for builder draft-dev proxy bootstrap, cookie precedence, revision preview bootstrap, and versions-route preview runtime.
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'builder_preview_runtime_bootstrap_allows_revisionless_session or ensure_endpoint_reuses_live_session_without_calling_legacy_ensure_session or heartbeat_preserves_existing_preview_base_path_when_refresh_returns_root'`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`3 passed`). Fresh builder sessions can boot with `revision_id = null`, existing revisions still take the cheap `ensure_active_session` path, and heartbeat preview metadata behavior is unchanged.
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/published_apps/test_admin_apps_crud.py backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'test_admin_apps_crud or test_admin_app_create_returns_no_draft_until_first_real_build or test_admin_app_ensure_session_bootstraps_live_workspace_without_inline_app_init_revision or test_builder_preview_ or test_ensure_endpoint_reuses_live_session_without_calling_legacy_ensure_session or test_heartbeat_preserves_existing_preview_base_path_when_refresh_returns_root'`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`22 passed`). The new-app async bootstrap path, revision-less preview bootstrap, and the touched preview proxy/reuse-live-session flows all pass together in the current worktree.
 
 ## Known gaps or follow-ups
 - Run the live coding-run e2e regularly in an environment with Sprite + OpenCode credentials so timing regressions are caught before manual QA.
 - Add explicit live preview polling assertions that confirm ordinary preview status/request traffic does not force service restarts in a real Sprite environment.
 - Add an explicit scheduled sweeper entrypoint so orphan cleanup does not rely only on request-driven best-effort sweeps.
 - The full draft-dev runtime lifecycle suite is currently blocked in this local worktree by unrelated app-creation `403` failures before preview/runtime assertions execute.
+- Deleted-provider recovery on the next `ensure` call was not changed in this pass; the current cheap-ensure path still needs a separate decision on whether a missing remote Sprite must force a resync/restart.

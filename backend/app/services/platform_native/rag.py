@@ -53,12 +53,16 @@ async def rag_list_visual_pipelines(rt: NativePlatformToolRuntime) -> Any:
 
 
 async def rag_operators_catalog(rt: NativePlatformToolRuntime) -> Any:
-    return await RagAdminService(rt.db).operators_catalog(ctx=await rt.build_control_plane_context())
+    return await RagAdminService(rt.db).operators_catalog(
+        ctx=await rt.build_control_plane_context(),
+        pipeline_type=str(rt.payload.get("pipeline_type") or ""),
+    )
 
 
 async def rag_operators_schema(rt: NativePlatformToolRuntime) -> Any:
     return await RagAdminService(rt.db).operators_schema(
         ctx=await rt.build_control_plane_context(),
+        pipeline_type=str(rt.payload.get("pipeline_type") or ""),
         operator_ids=list(rt.payload.get("operator_ids") or []),
     )
 
@@ -72,7 +76,7 @@ async def rag_create_pipeline_shell(rt: NativePlatformToolRuntime) -> Any:
         params=CreatePipelineInput(
             name=str(rt.payload.get("name") or ""),
             description=rt.payload.get("description"),
-            pipeline_type=str(rt.payload.get("pipeline_type") or "retrieval"),
+            pipeline_type=str(rt.payload.get("pipeline_type") or ""),
             nodes=nodes,
             edges=edges,
         ),
@@ -94,6 +98,8 @@ async def rag_create_visual_pipeline(rt: NativePlatformToolRuntime) -> Any:
                 }
             ],
         )
+    if not str(rt.payload.get("pipeline_type") or "").strip():
+        raise validation("pipeline_type is required", field="pipeline_type")
     nodes, edges = _graph_nodes_and_edges(rt.payload)
     return await RagAdminService(rt.db).create_pipeline(
         ctx=await rt.build_control_plane_context(),
@@ -159,7 +165,6 @@ async def rag_update_visual_pipeline(rt: NativePlatformToolRuntime) -> Any:
         params=UpdatePipelineInput(
             name=rt.payload.get("name"),
             description=rt.payload.get("description"),
-            pipeline_type=rt.payload.get("pipeline_type"),
             nodes=nodes or None,
             edges=edges or None,
         ),

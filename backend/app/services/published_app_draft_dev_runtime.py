@@ -22,8 +22,6 @@ from app.db.postgres.models.published_apps import (
     PublishedAppPublishJob,
     PublishedAppPublishJobStatus,
     PublishedAppRevision,
-    PublishedAppRevisionBuildStatus,
-    PublishedAppWorkspaceBuild,
 )
 from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_builder_snapshot_filter import filter_and_validate_builder_snapshot_files
@@ -263,49 +261,6 @@ class PublishedAppDraftDevRuntimeService:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         return metadata
-
-    @staticmethod
-    def _merge_live_workspace_materialization_request(
-        *,
-        existing_metadata: object,
-        origin_kind: str | None,
-        source_revision_id: UUID | None,
-        created_by: UUID | None,
-        origin_run_id: UUID | None = None,
-        restored_from_revision_id: UUID | None = None,
-    ) -> dict[str, Any]:
-        metadata = dict(existing_metadata or {}) if isinstance(existing_metadata, dict) else {}
-        normalized_origin_kind = str(origin_kind or "").strip() or None
-        if not normalized_origin_kind:
-            metadata.pop("live_workspace_materialization", None)
-            return metadata
-        metadata["live_workspace_materialization"] = {
-            "origin_kind": normalized_origin_kind,
-            "source_revision_id": str(source_revision_id) if source_revision_id else None,
-            "created_by": str(created_by) if created_by else None,
-            "origin_run_id": str(origin_run_id) if origin_run_id else None,
-            "restored_from_revision_id": str(restored_from_revision_id) if restored_from_revision_id else None,
-            "requested_at": datetime.now(timezone.utc).isoformat(),
-        }
-        return metadata
-
-    @staticmethod
-    def _get_live_workspace_materialization_request(metadata: object) -> dict[str, Any] | None:
-        payload = dict(metadata or {}) if isinstance(metadata, dict) else {}
-        request = payload.get("live_workspace_materialization")
-        if not isinstance(request, dict):
-            return None
-        origin_kind = str(request.get("origin_kind") or "").strip()
-        if not origin_kind:
-            return None
-        return {
-            "origin_kind": origin_kind,
-            "source_revision_id": str(request.get("source_revision_id") or "").strip() or None,
-            "created_by": str(request.get("created_by") or "").strip() or None,
-            "origin_run_id": str(request.get("origin_run_id") or "").strip() or None,
-            "restored_from_revision_id": str(request.get("restored_from_revision_id") or "").strip() or None,
-            "requested_at": request.get("requested_at"),
-        }
 
     @staticmethod
     def _get_live_workspace_snapshot_for_revision(
@@ -592,6 +547,43 @@ class PublishedAppDraftDevRuntimeService:
                 raise
             return session
 
+    async def _get_or_create_unbound_session(
+        self,
+        *,
+        app: PublishedApp,
+        user_id: UUID,
+        dependency_hash: str,
+        now: datetime,
+    ) -> PublishedAppDraftDevSession:
+        session = await self.get_session(app_id=app.id, user_id=user_id)
+        if session is not None:
+            return session
+        candidate = PublishedAppDraftDevSession(
+            id=uuid4(),
+            published_app_id=app.id,
+            project_id=app.project_id,
+            user_id=user_id,
+            revision_id=None,
+            status=PublishedAppDraftDevSessionStatus.starting,
+            runtime_backend=self.client.backend_name,
+            backend_metadata={},
+            idle_timeout_seconds=self.settings.idle_timeout_seconds,
+            last_activity_at=now,
+            expires_at=self._session_expires_at(now),
+            dependency_hash=dependency_hash,
+            runtime_generation=0,
+        )
+        try:
+            async with self.db.begin_nested():
+                self.db.add(candidate)
+                await self.db.flush()
+            return candidate
+        except IntegrityError:
+            session = await self.get_session(app_id=app.id, user_id=user_id)
+            if session is None:
+                raise
+            return session
+
     def _mark_workspace_error(self, workspace: PublishedAppDraftWorkspace, exc: Exception) -> None:
         workspace.status = PublishedAppDraftWorkspaceStatus.error
         workspace.last_error = str(exc)
@@ -674,6 +666,43 @@ class PublishedAppDraftDevRuntimeService:
     ) -> PublishedAppDraftDevSession:
         if not preserve_live_revision:
             session.revision_id = revision.id
+        session.draft_workspace_id = workspace.id
+        session.idle_timeout_seconds = self.settings.idle_timeout_seconds
+        session.last_activity_at = now
+        session.expires_at = self._session_expires_at(now)
+        session.preview_url = self.client.build_preview_proxy_path(str(session.id))
+        session.sandbox_id = self._normalize_runtime_sandbox_id(workspace.sandbox_id)
+        session.runtime_generation = self._runtime_generation_value(workspace)
+        session.runtime_backend = str(workspace.runtime_backend or self.client.backend_name)
+        session.backend_metadata = dict(workspace.backend_metadata or {})
+        session.dependency_hash = dependency_hash
+        preview_runtime = (
+            workspace.backend_metadata.get("preview_runtime")
+            if isinstance(workspace.backend_metadata, dict)
+            and isinstance(workspace.backend_metadata.get("preview_runtime"), dict)
+            else {}
+        )
+        preview_runtime_error = str(preview_runtime.get("last_error") or "").strip()
+        if workspace.status == PublishedAppDraftWorkspaceStatus.error:
+            session.last_error = workspace.last_error
+            session.status = PublishedAppDraftDevSessionStatus.error
+        elif workspace.status == PublishedAppDraftWorkspaceStatus.degraded:
+            session.last_error = workspace.last_error
+            session.status = PublishedAppDraftDevSessionStatus.degraded
+        else:
+            session.last_error = preview_runtime_error or None
+            session.status = PublishedAppDraftDevSessionStatus.serving
+        return session
+
+    def _attach_unbound_session(
+        self,
+        *,
+        session: PublishedAppDraftDevSession,
+        workspace: PublishedAppDraftWorkspace,
+        dependency_hash: str,
+        now: datetime,
+    ) -> PublishedAppDraftDevSession:
+        session.revision_id = None
         session.draft_workspace_id = workspace.id
         session.idle_timeout_seconds = self.settings.idle_timeout_seconds
         session.last_activity_at = now
@@ -1249,6 +1278,52 @@ class PublishedAppDraftDevRuntimeService:
         )
         return attached
 
+    async def ensure_live_workspace_session(
+        self,
+        *,
+        app: PublishedApp,
+        user_id: UUID,
+        trace_source: str | None = None,
+    ) -> PublishedAppDraftDevSession:
+        if not self.settings.enabled:
+            raise PublishedAppDraftDevRuntimeDisabled("Draft dev mode is disabled (`APPS_BUILDER_DRAFT_DEV_ENABLED=0`).")
+        if not user_id:
+            raise self._scope_error()
+
+        await self._acquire_scope_lock(app_id=app.id, user_id=user_id)
+        now = self._now()
+        await self.expire_idle_sessions(app_id=app.id)
+        await self.sweep_dormant_workspaces(app_id=app.id)
+        await self._sweep_remote_workspaces_best_effort()
+
+        workspace = await self.get_workspace(app_id=app.id)
+        if workspace is None or not str(workspace.sandbox_id or "").strip():
+            raise PublishedAppDraftDevRuntimeDisabled("Shared draft workspace is unavailable.")
+
+        session = await self._get_or_create_unbound_session(
+            app=app,
+            user_id=user_id,
+            dependency_hash=str(workspace.dependency_hash or ""),
+            now=now,
+        )
+        apps_builder_trace(
+            "workspace.ensure_live_session.attached",
+            domain="draft_dev.runtime",
+            app_id=str(app.id),
+            user_id=str(user_id),
+            trace_source=str(trace_source or "").strip() or None,
+            session_id=str(session.id),
+            workspace_id=str(workspace.id),
+            sandbox_id=str(workspace.sandbox_id or "") or None,
+            workspace_status=str(getattr(workspace.status, "value", workspace.status) or ""),
+        )
+        return self._attach_unbound_session(
+            session=session,
+            workspace=workspace,
+            dependency_hash=str(workspace.dependency_hash or session.dependency_hash or ""),
+            now=now,
+        )
+
     async def sync_session(
         self,
         *,
@@ -1324,201 +1399,6 @@ class PublishedAppDraftDevRuntimeService:
                 revision_token=revision_token,
                 workspace_fingerprint=workspace_fingerprint,
             )
-
-    async def record_live_workspace_materialization_request(
-        self,
-        *,
-        app_id: UUID,
-        origin_kind: str | None,
-        source_revision_id: UUID | None,
-        created_by: UUID | None,
-        origin_run_id: UUID | None = None,
-        restored_from_revision_id: UUID | None = None,
-    ) -> None:
-        workspace = await self.get_workspace(app_id=app_id)
-        if workspace is not None:
-            workspace.backend_metadata = self._merge_live_workspace_materialization_request(
-                existing_metadata=workspace.backend_metadata,
-                origin_kind=origin_kind,
-                source_revision_id=source_revision_id,
-                created_by=created_by,
-                origin_run_id=origin_run_id,
-                restored_from_revision_id=restored_from_revision_id,
-            )
-        result = await self.db.execute(
-            select(PublishedAppDraftDevSession)
-            .options(self._session_load_options())
-            .where(PublishedAppDraftDevSession.published_app_id == app_id)
-        )
-        for session in result.scalars().all():
-            session.backend_metadata = self._merge_live_workspace_materialization_request(
-                existing_metadata=session.backend_metadata,
-                origin_kind=origin_kind,
-                source_revision_id=source_revision_id,
-                created_by=created_by,
-                origin_run_id=origin_run_id,
-                restored_from_revision_id=restored_from_revision_id,
-            )
-
-    async def _current_draft_revision_matches_workspace_fingerprint(
-        self,
-        *,
-        app: PublishedApp,
-        workspace_fingerprint: str,
-    ) -> bool:
-        current_revision_id = getattr(app, "current_draft_revision_id", None)
-        if current_revision_id is None:
-            return False
-        revision = await self.db.get(PublishedAppRevision, current_revision_id)
-        if revision is None:
-            return False
-        if revision.build_status != PublishedAppRevisionBuildStatus.succeeded:
-            return False
-        if revision.workspace_build_id is not None:
-            workspace_build = await self.db.get(PublishedAppWorkspaceBuild, revision.workspace_build_id)
-            if (
-                workspace_build is not None
-                and str(workspace_build.workspace_fingerprint or "").strip() == workspace_fingerprint
-            ):
-                return True
-        dist_manifest = dict(revision.dist_manifest or {}) if isinstance(revision.dist_manifest, dict) else {}
-        return str(dist_manifest.get("source_fingerprint") or "").strip() == workspace_fingerprint
-
-    async def _maybe_materialize_live_workspace(
-        self,
-        *,
-        session: PublishedAppDraftDevSession,
-        workspace: PublishedAppDraftWorkspace,
-    ) -> PublishedAppDraftDevSession:
-        materialization_request = self._get_live_workspace_materialization_request(workspace.backend_metadata)
-        live_snapshot = (
-            dict(workspace.backend_metadata.get("live_workspace_snapshot") or {})
-            if isinstance(workspace.backend_metadata, dict)
-            and isinstance(workspace.backend_metadata.get("live_workspace_snapshot"), dict)
-            else {}
-        )
-        live_preview = (
-            dict(workspace.backend_metadata.get("live_preview") or {})
-            if isinstance(workspace.backend_metadata, dict)
-            and isinstance(workspace.backend_metadata.get("live_preview"), dict)
-            else {}
-        )
-        workspace_fingerprint = str(live_snapshot.get("workspace_fingerprint") or "").strip()
-        entry_file = str(live_snapshot.get("entry_file") or "").strip() or "src/main.tsx"
-        live_preview_status = str(live_preview.get("status") or "").strip().lower()
-        live_preview_fingerprint = str(live_preview.get("workspace_fingerprint") or "").strip()
-        if (
-            not workspace_fingerprint
-            or live_preview_status != "ready"
-            or live_preview_fingerprint != workspace_fingerprint
-        ):
-            return session
-        if materialization_request is None:
-            return session
-
-        app = await self.db.get(PublishedApp, session.published_app_id)
-        if app is None:
-            return session
-        if await self._current_draft_revision_matches_workspace_fingerprint(
-            app=app,
-            workspace_fingerprint=workspace_fingerprint,
-        ):
-            if materialization_request is not None and app.current_draft_revision_id and session.user_id:
-                current_revision = await self.db.get(PublishedAppRevision, app.current_draft_revision_id)
-                if current_revision is not None:
-                    rebound = await self.bind_session_to_revision_without_sync(
-                        app_id=app.id,
-                        user_id=session.user_id,
-                        revision=current_revision,
-                    )
-                    if rebound is not None:
-                        session = rebound
-            if materialization_request is not None:
-                await self.record_live_workspace_materialization_request(
-                    app_id=app.id,
-                    origin_kind=None,
-                    source_revision_id=None,
-                    created_by=None,
-                )
-            return session
-
-        def _parse_uuid(raw: str | None) -> UUID | None:
-            if not raw:
-                return None
-            try:
-                return UUID(str(raw))
-            except Exception:
-                return None
-
-        from app.services.published_app_draft_revision_materializer import (
-            PublishedAppDraftRevisionMaterializerService,
-        )
-
-        materializer = PublishedAppDraftRevisionMaterializerService(self.db)
-        try:
-            result = await materializer.materialize_live_workspace(
-                app=app,
-                entry_file=entry_file,
-                source_revision_id=(
-                    _parse_uuid(materialization_request.get("source_revision_id"))
-                    if materialization_request is not None
-                    else app.current_draft_revision_id
-                ),
-                created_by=(
-                    _parse_uuid(materialization_request.get("created_by"))
-                    if materialization_request is not None
-                    else None
-                )
-                or session.user_id,
-                origin_kind=materialization_request["origin_kind"],
-                origin_run_id=(
-                    _parse_uuid(materialization_request.get("origin_run_id"))
-                    if materialization_request is not None
-                    else None
-                ),
-                restored_from_revision_id=(
-                    _parse_uuid(materialization_request.get("restored_from_revision_id"))
-                    if materialization_request is not None
-                    else None
-                ),
-            )
-        except Exception as exc:
-            apps_builder_trace(
-                "workspace.materialize_live_preview.failed",
-                domain="draft_dev.runtime",
-                app_id=str(app.id),
-                user_id=str(session.user_id),
-                session_id=str(session.id),
-                workspace_id=str(workspace.id),
-                workspace_fingerprint=workspace_fingerprint,
-                error=str(exc),
-                error_type=exc.__class__.__name__,
-            )
-            return session
-
-        rebound = await self.bind_session_to_revision_without_sync(
-            app_id=app.id,
-            user_id=session.user_id,
-            revision=result.revision,
-        )
-        await self.record_live_workspace_materialization_request(
-            app_id=app.id,
-            origin_kind=None,
-            source_revision_id=None,
-            created_by=None,
-        )
-        apps_builder_trace(
-            "workspace.materialize_live_preview.done",
-            domain="draft_dev.runtime",
-            app_id=str(app.id),
-            user_id=str(session.user_id),
-            session_id=str(session.id),
-            workspace_id=str(workspace.id),
-            workspace_fingerprint=workspace_fingerprint,
-            revision_id=str(result.revision.id),
-            reused=result.reused,
-        )
-        return rebound or session
 
     async def bind_live_workspace_snapshot_to_revision(
         self,

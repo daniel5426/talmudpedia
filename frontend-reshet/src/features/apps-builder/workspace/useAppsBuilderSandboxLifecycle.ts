@@ -518,9 +518,6 @@ export function useAppsBuilderSandboxLifecycle({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
-    if (!currentRevisionId) {
-      return;
-    }
     if (hasActiveCodingRunLock) {
       return;
     }

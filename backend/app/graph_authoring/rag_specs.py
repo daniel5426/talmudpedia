@@ -146,8 +146,8 @@ def _ui_category(category: str) -> str:
 
 def rag_instance_contract() -> dict[str, Any]:
     return {
-        "required_fields": ["name", "nodes", "edges"],
-        "optional_fields": ["description", "pipeline_type"],
+        "required_fields": ["name", "pipeline_type", "nodes", "edges"],
+        "optional_fields": ["description"],
         "top_level_schema": {
             "type": "object",
             "properties": {
@@ -157,7 +157,7 @@ def rag_instance_contract() -> dict[str, Any]:
                 "nodes": {"type": "array", "items": {"type": "object"}},
                 "edges": {"type": "array", "items": {"type": "object"}},
             },
-            "required": ["name", "nodes", "edges"],
+            "required": ["name", "pipeline_type", "nodes", "edges"],
             "additionalProperties": False,
         },
         "node_required_fields": ["id", "operator", "position", "category"],

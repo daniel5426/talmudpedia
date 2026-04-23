@@ -13,19 +13,19 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - Draft mode uses one shared draft-dev workspace per app with per-user attachment sessions.
 - The shared live draft-dev workspace is the canonical editable runtime surface; saved revisions are checkpoints, not workspace drivers.
 - Preview is a static builder-preview pipeline backed by one persistent Vite/Rollup watch process plus a tiny static file server.
-- Sprite draft-preview startup now blocks on the first successful static preview build and defers `opencode` service startup until the coding-agent path actually needs it.
+- Fresh app session ensure now returns as soon as the live workspace/session exists and defers first durable `app_init` creation to the first watcher-ready build.
 - Sprite preview uses real Vite/Rollup watch mode with persistent graph reuse, not a custom poll-and-fresh-build loop.
 - Coding-agent runs execute against the canonical shared workspace watched by the persistent preview build pipeline.
 - Live manual code edits are applied incrementally into the shared draft-dev workspace instead of full-workspace resyncs on every debounce.
-- Manual code edits save only through `PATCH /builder/draft-dev/session/sync`; the removed `/versions/draft` route now returns `410`.
-- Preview-ready live workspace output is now the canonical version trigger: when the shared workspace diverges from the current draft revision and the watcher reports `ready`, heartbeat refreshes the live snapshot and materializes the next durable draft revision from that watcher-ready state.
+- Manual code edits save only through `PATCH /builder/draft-dev/session/sync`, and that route now syncs files plus directly materializes the next durable `manual_save` revision from watcher-ready output in the same request.
+- Preview always serves the latest successful watcher dist and does not wait for durable revision creation.
 - Published runtime remains static artifact delivery.
-- Completed write-producing coding-agent turns update the shared live workspace, and draft-dev heartbeat reconciles the live sandbox snapshot plus materializes the next durable draft revision from watcher-ready output only.
+- Completed write-producing coding-agent turns update the shared live workspace, and coding-run completion is the only automatic post-run trigger that may create the next durable draft revision.
 - Coding-agent bootstrap now prefers reusing an existing healthy live workspace/session as-is instead of re-ensuring the workspace against `current_draft_revision_id` on every run.
 - Coding-run finalization now uses a row-claimed two-phase flow instead of session-level advisory locks, so duplicate terminal-finalizer entry points can safely converge on one durable revision result.
 - Workspace builds are cached per app/workspace fingerprint and reused across retries or repeated version creation for unchanged source state.
 - Workspace materialization no longer runs `npm install` or `npm run build`; it snapshots the live workspace, waits for a watcher-ready preview build that matches by fingerprint or current revision token, and promotes that watcher dist into durable bundle storage.
-- App creation now provisions the shared draft workspace from the starter, waits for the first watcher-ready build, materializes the first durable `app_init` draft revision, and only then sets `current_draft_revision_id`.
+- App creation no longer seeds a provisional queued `Version 1`; the first durable `app_init` revision is created only when the first watcher-ready build exists.
 - Draft-dev recovery now prefers the latest persisted live-workspace snapshot for the current revision instead of blindly resyncing from the saved draft revision files.
 - Durable dist assets still use the published bundle-storage contract, but local Sprite/dev runtimes now fall back to filesystem-backed bundle storage when the configured local S3 endpoint is unavailable.
 - Revision materialization updates draft revision pointers without reattaching the live draft-dev session to the saved revision snapshot.
@@ -33,6 +33,7 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - The builder preview proxy now serves static preview assets from the promoted current build and exposes `/_talmudpedia/status` directly from backend heartbeat metadata.
 - Preview rebuild freshness is driven by watcher status while code-tab freshness remains driven by `live_workspace_snapshot` and `workspace_revision_token`.
 - Restore syncs the selected revision back into the live workspace, waits for watcher-ready output, and creates a new durable draft revision with `restored_from_revision_id`.
+- Heartbeat is liveness-only and does not refresh snapshots or create revisions.
 - Publish only flips `current_published_revision_id` to an already materialized revision inside the request/job-contract response; it does not wait for a build, create a new revision, or dispatch a worker build.
 - The previous template catalog was removed, but the repo now includes a new starter pack at `backend/app/templates/published_apps/classic-chat/`.
 - Template infrastructure remains active in backend services and app metadata, and the system is moving toward a single canonical starter rather than a broad multi-template catalog.
@@ -103,6 +104,7 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 
 ## Canonical Related Docs
 
+- `docs/product-specs/apps_builder_preview_and_versioning_spec.md`
 - `docs/product-specs/published_apps_spec.md`
 - `docs/product-specs/runtime_sdk_host_anywhere_spec.md`
 - `docs/design-docs/coding_agent_runtime_current.md`

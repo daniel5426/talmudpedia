@@ -45,8 +45,8 @@ async def dispatch_pipeline_job_background(
 @dataclass(frozen=True)
 class CreatePipelineInput:
     name: str
+    pipeline_type: str
     description: str | None = None
-    pipeline_type: str = "retrieval"
     nodes: list[dict[str, Any]] | None = None
     edges: list[dict[str, Any]] | None = None
     org_unit_id: UUID | None = None
@@ -56,7 +56,6 @@ class CreatePipelineInput:
 class UpdatePipelineInput:
     name: str | None = None
     description: str | None = None
-    pipeline_type: str | None = None
     nodes: list[dict[str, Any]] | None = None
     edges: list[dict[str, Any]] | None = None
 
@@ -91,32 +90,57 @@ class RagAdminService:
         total = int(await self.db.scalar(total_stmt) or 0)
         return ListPage(items=[self.serialize_pipeline(row, view=query.view) for row in rows], total=total, query=query)
 
-    async def operators_catalog(self, *, ctx: ControlPlaneContext) -> dict[str, Any]:
+    async def operators_catalog(self, *, ctx: ControlPlaneContext, pipeline_type: str) -> dict[str, Any]:
         await sync_custom_operators(self.db, ctx.organization_id)
-        items = [rag_catalog_item(spec).model_dump(mode="json") for spec in self.registry.list_all(str(ctx.organization_id))]
+        if not str(pipeline_type or "").strip():
+            raise validation("pipeline_type is required", field="pipeline_type")
+        normalized_pipeline_type = self._normalize_pipeline_type(pipeline_type)
+        items = [
+            rag_catalog_item(spec).model_dump(mode="json")
+            for spec in self._operators_for_pipeline_type(
+                normalized_pipeline_type,
+                organization_id=str(ctx.organization_id),
+            )
+        ]
         return {"operators": items}
 
-    async def operators_schema(self, *, ctx: ControlPlaneContext, operator_ids: list[str]) -> dict[str, Any]:
+    async def operators_schema(self, *, ctx: ControlPlaneContext, pipeline_type: str, operator_ids: list[str]) -> dict[str, Any]:
         await sync_custom_operators(self.db, ctx.organization_id)
+        if not str(pipeline_type or "").strip():
+            raise validation("pipeline_type is required", field="pipeline_type")
+        normalized_pipeline_type = self._normalize_pipeline_type(pipeline_type)
         normalized = [str(item).strip() for item in operator_ids if str(item).strip()]
         if not normalized:
             raise validation("operator_ids must be a non-empty array", field="operator_ids")
         schemas: dict[str, Any] = {}
         unknown: list[str] = []
+        disallowed: list[str] = []
         for operator_id in normalized:
             spec = self.registry.get(operator_id, organization_id=str(ctx.organization_id))
             if spec is None:
                 unknown.append(operator_id)
                 continue
+            if not self._operator_allowed_for_pipeline_type(spec, normalized_pipeline_type):
+                disallowed.append(operator_id)
+                continue
             schemas[operator_id] = rag_node_spec(spec).model_dump(mode="json", exclude_none=True)
         if unknown:
             raise validation("Unknown operator ids", field="operator_ids", unknown=unknown)
+        if disallowed:
+            raise validation(
+                "Operators are not available for the requested pipeline_type",
+                field="operator_ids",
+                pipeline_type=normalized_pipeline_type.value,
+                disallowed=disallowed,
+            )
         return {"specs": schemas, "instance_contract": rag_instance_contract()}
 
     async def create_pipeline(self, *, ctx: ControlPlaneContext, params: CreatePipelineInput) -> dict[str, Any]:
         name = str(params.name or "").strip()
         if not name:
             raise validation("name is required", field="name")
+        if not str(params.pipeline_type or "").strip():
+            raise validation("pipeline_type is required", field="pipeline_type")
         project_id = self._require_project_id(ctx)
         await sync_custom_operators(self.db, ctx.organization_id)
         normalized_graph = self._normalize_graph_for_write(
@@ -174,8 +198,6 @@ class RagAdminService:
             )
             pipeline.nodes = list(normalized_graph["nodes"])
             pipeline.edges = list(normalized_graph["edges"])
-        if params.pipeline_type is not None:
-            pipeline.pipeline_type = self._normalize_pipeline_type(params.pipeline_type)
         pipeline.updated_at = datetime.utcnow()
         binding_service = ToolBindingService(self.db)
         await binding_service.sync_pipeline_tool_metadata(
@@ -548,6 +570,27 @@ class RagAdminService:
             return PipelineType(raw)
         except ValueError as exc:
             raise validation("Unsupported pipeline_type", field="pipeline_type", value=value) from exc
+
+    def _operators_for_pipeline_type(
+        self,
+        pipeline_type: PipelineType,
+        *,
+        organization_id: str,
+    ) -> list:
+        return [
+            spec
+            for spec in self.registry.list_all(organization_id)
+            if self._operator_allowed_for_pipeline_type(spec, pipeline_type)
+        ]
+
+    @staticmethod
+    def _operator_allowed_for_pipeline_type(spec, pipeline_type: PipelineType) -> bool:
+        category = str(getattr(getattr(spec, "category", None), "value", getattr(spec, "category", "")) or "").strip().lower()
+        if category == "custom":
+            return True
+        if pipeline_type == PipelineType.INGESTION:
+            return category in {"source", "normalization", "enrichment", "chunking", "utility", "embedding", "storage"}
+        return category in {"input", "utility", "embedding", "retrieval", "reranking", "output"}
 
     @staticmethod
     def _dump(value: Any) -> Any:

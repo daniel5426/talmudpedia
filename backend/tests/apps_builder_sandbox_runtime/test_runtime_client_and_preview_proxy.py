@@ -20,7 +20,7 @@ from app.services.published_app_draft_dev_runtime_client import (
 from app.services.runtime_surface import RuntimeSurfaceService
 
 
-def _fake_preview_app_and_revision():
+def _fake_preview_app_and_revision(revision_id: str | None = "revision-1"):
     return (
         SimpleNamespace(
             id="app-1",
@@ -35,7 +35,7 @@ def _fake_preview_app_and_revision():
             auth_template_key="auth-classic",
             external_auth_oidc=False,
         ),
-        SimpleNamespace(id="revision-1"),
+        SimpleNamespace(id=revision_id) if revision_id else None,
     )
 
 
@@ -44,17 +44,17 @@ async def _fake_load_preview_app_and_revision(**kwargs):
     return _fake_preview_app_and_revision()
 
 
-def _fake_session(preview_metadata: dict | None = None):
+def _fake_session(preview_metadata: dict | None = None, *, revision_id: str | None = "revision-1"):
     return SimpleNamespace(
         id="session-1",
         published_app_id="app-1",
-        revision_id="revision-1",
+        revision_id=revision_id,
         backend_metadata=preview_metadata or {},
         draft_workspace=None,
     )
 
 
-def _preview_token(*, app_id: str = "app-1", session_id: str = "session-1", revision_id: str = "revision-1") -> str:
+def _preview_token(*, app_id: str = "app-1", session_id: str = "session-1", revision_id: str | None = "revision-1") -> str:
     return create_preview_token(
         subject="user-1",
         organization_id="tenant-1",
@@ -220,6 +220,29 @@ async def test_builder_preview_proxy_accepts_valid_token_and_forwards_sprite_aut
     assert captured["headers"]["Authorization"] == "Bearer sprite-secret"
     assert captured["headers"]["x-sprite-service"] == "builder-static-preview"
     assert preview_proxy_router.PREVIEW_COOKIE_NAME in response.headers.get("set-cookie", "")
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_runtime_bootstrap_allows_revisionless_session(monkeypatch: pytest.MonkeyPatch, client):
+    async def _fake_load_session(*, db, session_id):
+        _ = db, session_id
+        return _fake_session(revision_id=None)
+
+    async def _fake_load_preview_app_and_revision_none(**kwargs):
+        _ = kwargs
+        return _fake_preview_app_and_revision(revision_id=None)
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision_none)
+
+    response = await client.get(
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/runtime/bootstrap?runtime_token={_preview_token(revision_id=None)}",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["app_id"] == "app-1"
+    assert payload["revision_id"] is None
 
 
 @pytest.mark.asyncio

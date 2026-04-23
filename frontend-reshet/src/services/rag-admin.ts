@@ -8,45 +8,6 @@ import {
   PipelineStepExecution,
 } from "@/components/pipeline/types";
 
-export interface RAGStats {
-  total_indices: number;
-  live_indices: number;
-  total_chunks: number;
-  total_jobs: number;
-  completed_jobs: number;
-  failed_jobs: number;
-  running_jobs: number;
-  total_pipelines?: number;
-  compiled_pipelines?: number;
-  active_pipeline_jobs?: number;
-  available_providers: {
-    embedding: string[];
-    vector_store: string[];
-    chunker: string[];
-    loader: string[];
-  };
-}
-
-export interface RAGIndex {
-  name: string;
-  display_name: string;
-  dimension: number;
-  total_vectors: number;
-  namespaces: Record<string, number>;
-  status: string;
-  synced: boolean;
-  owner_id?: string;
-}
-
-
-export interface ChunkPreview {
-  id: string;
-  text: string;
-  token_count: number;
-  start_index: number;
-  end_index: number;
-}
-
 export interface RAGPipeline {
   id: string;
   name: string;
@@ -237,66 +198,6 @@ class RAGAdminService {
     if (organizationId) params.set("organization_id", organizationId);
 
     return httpClient.get<StepFieldContent>(`/admin/pipelines/jobs/${jobId}/steps/${stepId}/field?${params.toString()}`);
-  }
-
-  async getStats(organizationId?: string): Promise<RAGStats> {
-    const url = organizationId ? `/admin/rag/stats?organization_id=${organizationId}` : "/admin/rag/stats";
-    return httpClient.get<RAGStats>(url);
-  }
-
-  async listIndices(organizationId?: string): Promise<{ indices: RAGIndex[] }> {
-    const url = organizationId ? `/admin/rag/indices?organization_id=${organizationId}` : "/admin/rag/indices";
-    return httpClient.get<{ indices: RAGIndex[] }>(url);
-  }
-
-  async createIndex(data: {
-    name: string;
-    display_name?: string;
-    dimension?: number;
-    namespace?: string;
-    owner_id?: string;
-  }, organizationId?: string): Promise<{ status: string; name: string; dimension: number }> {
-    const url = organizationId ? `/admin/rag/indices?organization_id=${organizationId}` : "/admin/rag/indices";
-    return httpClient.post(url, data);
-  }
-
-  async getIndex(name: string, organizationId?: string): Promise<RAGIndex> {
-    const url = organizationId ? `/admin/rag/indices/${name}?organization_id=${organizationId}` : `/admin/rag/indices/${name}`;
-    return httpClient.get<RAGIndex>(url);
-  }
-
-  async deleteIndex(name: string, organizationId?: string): Promise<{ status: string; name: string }> {
-    const url = organizationId ? `/admin/rag/indices/${name}?organization_id=${organizationId}` : `/admin/rag/indices/${name}`;
-    return httpClient.delete(url);
-  }
-
-  async chunkPreview(data: {
-    text: string;
-    chunk_size?: number;
-    chunk_overlap?: number;
-  }): Promise<{ total_chunks: number; chunks: ChunkPreview[] }> {
-    return httpClient.post("/admin/rag/chunk-preview", data);
-  }
-
-
-  async listPipelines(organizationId?: string): Promise<{ pipelines: RAGPipeline[] }> {
-    const url = organizationId ? `/admin/rag/pipelines?organization_id=${organizationId}` : "/admin/rag/pipelines";
-    return httpClient.get<{ pipelines: RAGPipeline[] }>(url);
-  }
-
-  async createPipeline(data: {
-    name: string;
-    description?: string;
-    embedding_provider?: string;
-    vector_store_provider?: string;
-    chunker_strategy?: string;
-    chunk_size?: number;
-    chunk_overlap?: number;
-    is_default?: boolean;
-    owner_id?: string;
-  }, organizationId?: string): Promise<{ id: string; status: string }> {
-    const url = organizationId ? `/admin/rag/pipelines?organization_id=${organizationId}` : "/admin/rag/pipelines";
-    return httpClient.post(url, data);
   }
 
   async getOperatorCatalog(organizationId?: string): Promise<{ operators: NodeCatalogItem[] }> {
