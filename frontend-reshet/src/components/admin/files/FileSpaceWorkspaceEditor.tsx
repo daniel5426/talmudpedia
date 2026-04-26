@@ -1,7 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ChevronDown, ChevronRight, Copy, Download, FileCode2, FileText, Folder, FolderOpen, Settings2, Trash2, X } from "lucide-react"
+import { useCallback, useMemo, useRef, useState } from "react"
+import { Settings2 } from "lucide-react"
 
 import { ArtifactWorkspaceSidebarHeader } from "@/components/admin/artifacts/ArtifactWorkspaceSidebarHeader"
 import { ArtifactWorkspaceTabs } from "@/components/admin/artifacts/ArtifactWorkspaceTabs"
@@ -11,65 +11,10 @@ import {
   MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
 } from "@/components/admin/artifacts/artifactWorkspaceUtils"
+import { PierreFileTree, type PierreFileTreeAction } from "@/components/file-tree/PierreFileTree"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import type { FileSpaceEntry } from "@/services"
-
-/* ------------------------------------------------------------------ */
-/*  Types & Utils                                                     */
-/* ------------------------------------------------------------------ */
-
-export type FileSpaceWorkspaceNode = {
-  path: string
-  name: string
-  kind: "file" | "directory"
-  children?: FileSpaceWorkspaceNode[]
-  entry?: FileSpaceEntry
-}
-
-const TREE_MENU_DOUBLE_CLICK_MS = 180
-
-function buildSpaceTree(entries: FileSpaceEntry[]): FileSpaceWorkspaceNode[] {
-  const root: FileSpaceWorkspaceNode = { path: "", name: "", kind: "directory", children: [] }
-  for (const entry of entries) {
-    const parts = entry.path.split("/")
-    let current = root
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i]
-      const isLast = i === parts.length - 1
-      const isDir = !isLast || entry.entry_type === "directory"
-
-      let child = current.children?.find((c) => c.name === part)
-      if (!child) {
-        const nodePath = parts.slice(0, i + 1).join("/")
-        child = {
-          path: nodePath,
-          name: part,
-          kind: isDir ? "directory" : "file",
-          children: isDir ? [] : undefined,
-          entry: isLast ? entry : undefined,
-        }
-        current.children = current.children || []
-        current.children.push(child)
-      }
-      if (isDir) {
-        current = child
-      }
-    }
-  }
-
-  const sortNodes = (node: FileSpaceWorkspaceNode) => {
-    if (node.children) {
-      node.children.sort((a, b) => {
-        if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1
-        return a.name.localeCompare(b.name)
-      })
-      node.children.forEach(sortNodes)
-    }
-  }
-  sortNodes(root)
-  return root.children || []
-}
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                             */
@@ -155,66 +100,71 @@ export function FileSpaceWorkspaceEditor({
   const didDragSidebar = useRef(false)
 
   // ---- tree state ----
-  const tree = useMemo(() => buildSpaceTree(entries), [entries])
-  const [expandedDirs, setExpandedDirs] = useState<string[]>(() => {
-    const defaultDirs: string[] = []
-    function traverse(nodes: FileSpaceWorkspaceNode[]) {
-      for (const node of nodes) {
-        if (node.kind === "directory") {
-          defaultDirs.push(node.path)
-          if (node.children) traverse(node.children)
-        }
-      }
-    }
-    traverse(tree)
-    return defaultDirs
-  })
+  const treePaths = useMemo(
+    () => entries.map((entry) => (entry.entry_type === "directory" ? `${entry.path.replace(/\/+$/, "")}/` : entry.path)),
+    [entries],
+  )
 
   // ---- drag state for tabs ----
   const [draggingTab, setDraggingTab] = useState<string | null>(null)
   const [tabDropIndex, setTabDropIndex] = useState<number | null>(null)
 
-  // ---- drag state for file tree ----
-  const [draggingNode, setDraggingNode] = useState<string | null>(null)
-  const [dropTargetDir, setDropTargetDir] = useState<string | null>(null)
-  const [treeMenu, setTreeMenu] = useState<{
-    path: string
-    kind: "file" | "directory"
-    x: number
-    y: number
-    expanded?: boolean
-  } | null>(null)
-
   const [isScrolled, setIsScrolled] = useState(false)
-  const treeMenuRef = useRef<HTMLDivElement | null>(null)
-  const lastTreeMenuClickRef = useRef<{ path: string; timestamp: number } | null>(null)
 
   const activatePath = (path: string) => {
     setIsScrolled(false)
     onActiveFileChange(path)
   }
 
-  useEffect(() => {
-    if (!treeMenu) return
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (treeMenuRef.current?.contains(event.target as Node)) return
-      setTreeMenu(null)
+  const handleCopyPath = useCallback(async (path: string) => {
+    try {
+      await navigator.clipboard?.writeText(path)
+    } catch (error) {
+      console.error(error)
     }
+  }, [])
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setTreeMenu(null)
-      }
+  const fileTreeActions = useCallback((item: { kind: "directory" | "file"; path: string }): PierreFileTreeAction[] => {
+    const actions: PierreFileTreeAction[] = [
+      {
+        label: "Upload file",
+        icon: "new-file",
+        onSelect: onUploadFile,
+      },
+      {
+        label: "New folder",
+        icon: "new-folder",
+        onSelect: onAddFolder,
+      },
+      {
+        label: "Rename",
+        icon: "rename",
+        startRenaming: true,
+        onSelect: () => {},
+      },
+    ]
+    if (item.kind === "file") {
+      actions.push({
+        label: "Download",
+        icon: "download",
+        onSelect: onDownloadEntry,
+      })
     }
-
-    window.addEventListener("mousedown", handlePointerDown)
-    window.addEventListener("keydown", handleKeyDown)
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown)
-      window.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [treeMenu])
+    actions.push(
+      {
+        label: "Copy path",
+        icon: "copy",
+        onSelect: (path) => void handleCopyPath(path),
+      },
+      {
+        label: "Delete",
+        icon: "delete",
+        destructive: true,
+        onSelect: onDeleteEntry,
+      },
+    )
+    return actions
+  }, [handleCopyPath, onAddFolder, onDeleteEntry, onDownloadEntry, onUploadFile])
 
   /* ================================================================ */
   /*  Handlers                                                        */
@@ -230,11 +180,6 @@ export function FileSpaceWorkspaceEditor({
       activatePath(newActive)
     }
     setOpenTabs(next)
-  }
-
-  const toggleDir = (path: string) => {
-    if (loading) return
-    setExpandedDirs((cur) => (cur.includes(path) ? cur.filter((v) => v !== path) : [...cur, path]))
   }
 
   /* ---- sidebar resize via border ---- */
@@ -324,190 +269,6 @@ export function FileSpaceWorkspaceEditor({
     setTabDropIndex(null)
   }
 
-  /* ---- file-tree drag-and-drop ---- */
-  const handleNodeDragStart = (e: React.DragEvent, path: string) => {
-    if (loading) return
-    setDraggingNode(path)
-    e.dataTransfer.effectAllowed = "move"
-    e.dataTransfer.setData("application/x-tree-node", path)
-  }
-
-  const handleDirDragOver = (e: React.DragEvent, dirPath: string) => {
-    if (loading) return
-    e.preventDefault()
-    e.stopPropagation()
-    e.dataTransfer.dropEffect = "move"
-    setDropTargetDir(dirPath)
-  }
-
-  const handleRootDragOver = (e: React.DragEvent) => {
-    if (loading) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = "move"
-    setDropTargetDir("__root__")
-  }
-
-  const handleDirDrop = (e: React.DragEvent, targetDir: string) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (loading || !draggingNode) return
-    const actualTarget = targetDir === "__root__" ? "" : targetDir
-
-    const draggedNodeData = entries.find((en) => en.path === draggingNode)
-    if (draggedNodeData) {
-      const fileName = draggingNode.split("/").pop()!
-      const newPath = actualTarget ? `${actualTarget}/${fileName}` : fileName
-
-      if (newPath !== draggingNode && !entries.some((f) => f.path === newPath)) {
-        onMoveEntry(draggingNode, newPath)
-      }
-    }
-
-    setDraggingNode(null)
-    setDropTargetDir(null)
-  }
-
-  const handleNodeDragEnd = () => {
-    setDraggingNode(null)
-    setDropTargetDir(null)
-  }
-
-  const handleCopyPath = async (path: string) => {
-    try {
-      await navigator.clipboard?.writeText(path)
-    } catch (err) {
-      console.error(err)
-    }
-    setTreeMenu(null)
-  }
-
-  const openTreeMenu = (
-    event: React.MouseEvent<HTMLElement>,
-    node: FileSpaceWorkspaceNode,
-    options?: { expanded?: boolean },
-  ) => {
-    event.preventDefault()
-    event.stopPropagation()
-    setTreeMenu({
-      path: node.path,
-      kind: node.kind,
-      x: event.clientX,
-      y: event.clientY,
-      expanded: options?.expanded,
-    })
-  }
-
-  const maybeOpenTreeMenuFromClick = (
-    event: React.MouseEvent<HTMLElement>,
-    node: FileSpaceWorkspaceNode,
-    options?: { expanded?: boolean },
-  ) => {
-    const now = event.timeStamp
-    const lastClick = lastTreeMenuClickRef.current
-    if (lastClick && lastClick.path === node.path && now - lastClick.timestamp <= TREE_MENU_DOUBLE_CLICK_MS) {
-      lastTreeMenuClickRef.current = null
-      openTreeMenu(event, node, options)
-      return
-    }
-    lastTreeMenuClickRef.current = { path: node.path, timestamp: now }
-  }
-
-  /* ================================================================ */
-  /*  Tree rendering                                                  */
-  /* ================================================================ */
-
-  const renderNode = (node: FileSpaceWorkspaceNode, depth: number): React.ReactElement => {
-    if (node.kind === "directory") {
-      const isExpanded = expandedDirs.includes(node.path)
-      const isDropTarget = dropTargetDir === node.path
-      return (
-        <div key={node.path}>
-          <button
-            type="button"
-            draggable
-            onDragStart={(e) => handleNodeDragStart(e, node.path)}
-            onDragEnd={handleNodeDragEnd}
-            onDragOver={(e) => handleDirDragOver(e, node.path)}
-            onDrop={(e) => handleDirDrop(e, node.path)}
-            className={cn(
-              "flex h-[22px] w-full items-center gap-1 text-left text-[13px] transition-colors duration-75",
-              palette.text,
-              isDropTarget ? palette.dropTarget : palette.rowHover,
-            )}
-            style={{ paddingLeft: `${8 + depth * 16}px` }}
-            onClick={() => toggleDir(node.path)}
-            onContextMenu={(event) => openTreeMenu(event, node, { expanded: isExpanded })}
-            onClickCapture={(event) => maybeOpenTreeMenuFromClick(event, node, { expanded: isExpanded })}
-          >
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-              {isExpanded ? (
-                <ChevronDown className="h-3 w-3 opacity-60" />
-              ) : (
-                <ChevronRight className="h-3 w-3 opacity-60" />
-              )}
-            </span>
-            {isExpanded ? (
-              <FolderOpen className="h-[15px] w-[15px] shrink-0 text-[#dcb67a]" />
-            ) : (
-              <Folder className="h-[15px] w-[15px] shrink-0 text-[#dcb67a]" />
-            )}
-            <span className="truncate pl-0.5">{node.name}</span>
-          </button>
-          {isExpanded && (
-            <div>{(node.children || []).map((child) => renderNode(child, depth + 1))}</div>
-          )}
-        </div>
-      )
-    }
-
-    const isActive = node.path === activeFilePath
-    const Icon = node.entry?.is_text ? FileText : FileCode2
-
-    return (
-      <div
-        key={node.path}
-        draggable
-        onDragStart={(e) => handleNodeDragStart(e, node.path)}
-        onDragEnd={handleNodeDragEnd}
-        className={cn(
-          "group flex h-[22px] items-center transition-colors duration-75",
-          isActive && palette.activeRow,
-        )}
-      >
-        <button
-          type="button"
-          className={cn(
-            "flex min-w-0 flex-1 items-center gap-1 text-left text-[13px]",
-            !isActive && palette.rowHover,
-            palette.text,
-          )}
-          style={{ paddingLeft: `${10 + depth * 16}px` }}
-          onClick={() => {
-            activatePath(node.path)
-            setOpenTabs((prev) => (prev.includes(node.path) ? prev : [...prev, node.path]))
-          }}
-          onContextMenu={(event) => openTreeMenu(event, node)}
-          onClickCapture={(event) => maybeOpenTreeMenuFromClick(event, node)}
-        >
-          <Icon className="h-[14px] w-[14px] shrink-0 text-[#519aba]" />
-          <span className="truncate pl-0.5">{node.name}</span>
-        </button>
-        <button
-          type="button"
-          className={cn(
-            "mr-1 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] opacity-0 transition-opacity group-hover:opacity-100",
-            palette.muted,
-            palette.buttonHover,
-          )}
-          onClick={() => onDeleteEntry(node.path)}
-          title={`Delete ${node.path}`}
-        >
-          <X className="h-3 w-3" />
-        </button>
-      </div>
-    )
-  }
-
   // Convert FileSpaceEntry[] to mock ArtifactSourceFile for ArtifactWorkspaceTabs compat:
   const sourceFilesLike = entries.map((e) => ({ path: e.path, content: "" }))
 
@@ -523,11 +284,7 @@ export function FileSpaceWorkspaceEditor({
         style={{ width: isTreeOpen ? `${sidebarWidth}px` : "0px" }}
       >
         {isTreeOpen && (
-          <div
-            className="flex min-h-0 flex-1 flex-col overflow-hidden"
-            onDragOver={handleRootDragOver}
-            onDrop={(e) => handleDirDrop(e, "__root__")}
-          >
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <ArtifactWorkspaceSidebarHeader
               itemCount={entries.length}
               loading={loading}
@@ -537,7 +294,7 @@ export function FileSpaceWorkspaceEditor({
               onAddFolder={onAddFolder}
             />
 
-            <div className="flex-1 overflow-y-auto overflow-x-hidden py-0.5">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {loading ? (
                 <div className="space-y-1 px-2 py-2">
                   {Array.from({ length: 4 }).map((_, index) => (
@@ -576,7 +333,17 @@ export function FileSpaceWorkspaceEditor({
                       <span className="truncate pl-0.5">Configuration</span>
                     </button>
                   </div>
-                  {tree.map((node) => renderNode(node, 0))}
+                  <PierreFileTree
+                    paths={treePaths}
+                    selectedPath={activeFilePath}
+                    onSelectPath={(path) => {
+                      activatePath(path)
+                      setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]))
+                    }}
+                    onMovePath={onMoveEntry}
+                    onRenamePath={onMoveEntry}
+                    actions={fileTreeActions}
+                  />
                 </>
               )}
             </div>
@@ -647,73 +414,6 @@ export function FileSpaceWorkspaceEditor({
           )}
         </div>
       </div>
-
-      {treeMenu ? (
-        <div
-          ref={treeMenuRef}
-          className="fixed z-50 min-w-52 overflow-hidden rounded-xl border border-border/60 bg-background/96 p-1.5 shadow-[0_14px_40px_rgba(15,23,42,0.14)] backdrop-blur-sm"
-          style={{
-            left: `${treeMenu.x}px`,
-            top: `${treeMenu.y}px`,
-          }}
-        >
-          <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-            {treeMenu.path}
-          </div>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-foreground hover:bg-accent"
-            onClick={() => {
-              if (treeMenu.kind === "file") {
-                activatePath(treeMenu.path)
-                setOpenTabs((prev) => (prev.includes(treeMenu.path) ? prev : [...prev, treeMenu.path]))
-              } else {
-                toggleDir(treeMenu.path)
-              }
-              setTreeMenu(null)
-            }}
-          >
-            {treeMenu.kind === "file" ? (
-              <FileText className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <FolderOpen className="h-4 w-4 text-muted-foreground" />
-            )}
-            <span>{treeMenu.kind === "file" ? "Open file" : treeMenu.expanded ? "Collapse folder" : "Expand folder"}</span>
-          </button>
-          {treeMenu.kind === "file" ? (
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-foreground hover:bg-accent"
-              onClick={() => {
-                onDownloadEntry(treeMenu.path)
-                setTreeMenu(null)
-              }}
-            >
-              <Download className="h-4 w-4 text-muted-foreground" />
-              <span>Download file</span>
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-foreground hover:bg-accent"
-            onClick={() => void handleCopyPath(treeMenu.path)}
-          >
-            <Copy className="h-4 w-4 text-muted-foreground" />
-            <span>Copy path</span>
-          </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-destructive hover:bg-destructive/10"
-            onClick={() => {
-              onDeleteEntry(treeMenu.path)
-              setTreeMenu(null)
-            }}
-          >
-            <Trash2 className="h-4 w-4" />
-            <span>Delete</span>
-          </button>
-        </div>
-      ) : null}
     </div>
   )
 }

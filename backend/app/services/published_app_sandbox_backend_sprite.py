@@ -1353,10 +1353,10 @@ print(json.dumps({{
             workspace_fingerprint=workspace_fingerprint,
         )
         await self._ensure_preview_service(sprite_name=sprite_name)
-        await self._ensure_preview_ready_with_repair(
+        self._trace(
+            "sprite.start_session.preview_warmup_detached",
             sprite_name=sprite_name,
-            workspace_path=self._live_workspace_path(),
-            dependency_hash=dependency_hash,
+            revision_token=revision_token,
         )
         live_preview = self._with_live_preview_supervisor(
             live_preview=await self._read_live_preview_status(sprite_name=sprite_name),

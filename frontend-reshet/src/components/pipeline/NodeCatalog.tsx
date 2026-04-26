@@ -14,7 +14,6 @@ import {
   ArrowRightLeft,
   SortAsc,
   Code,
-  Plus,
   PanelLeft
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -31,7 +30,6 @@ import type { NodeCatalogItem } from "@/services/graph-authoring"
 interface NodeCatalogProps {
   catalog: NodeCatalogItem[]
   onDragStart: (event: React.DragEvent, operatorId: string, category: OperatorCategory) => void
-  onAddCustomOperator?: () => void
   onClose?: () => void
   pipelineType?: PipelineType
 }
@@ -123,7 +121,7 @@ function CategorySection({
   )
 }
 
-export function NodeCatalog({ catalog, onDragStart, onAddCustomOperator, onClose, pipelineType = "ingestion" }: NodeCatalogProps) {
+export function NodeCatalog({ catalog, onDragStart, onClose, pipelineType = "ingestion" }: NodeCatalogProps) {
   const [search, setSearch] = useState("")
 
   const categories = useMemo(() => {
@@ -167,11 +165,6 @@ export function NodeCatalog({ catalog, onDragStart, onAddCustomOperator, onClose
             )}
             <h3 className="text-xs font-bold text-foreground/70 uppercase tracking-tight">Operators</h3>
           </div>
-          {onAddCustomOperator && (
-            <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md" onClick={onAddCustomOperator}>
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          )}
         </div>
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />

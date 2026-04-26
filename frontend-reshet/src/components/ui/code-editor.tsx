@@ -9,6 +9,7 @@ interface CodeEditorProps {
     value: string
     onChange: (value: string) => void
     language?: string
+    path?: string
     height?: string | number
     className?: string
     readOnly?: boolean
@@ -21,6 +22,7 @@ export function CodeEditor({
     value,
     onChange,
     language = "python",
+    path,
     height = "100%",
     className,
     readOnly = false,
@@ -48,7 +50,9 @@ export function CodeEditor({
             <Editor
                 height={height}
                 language={language}
+                path={path ? `file:///editor/${encodeURI(path)}` : undefined}
                 value={value}
+                keepCurrentModel={Boolean(path)}
                 onChange={(val) => onChange(val || "")}
                 onMount={handleMount}
                 theme={monacoTheme}

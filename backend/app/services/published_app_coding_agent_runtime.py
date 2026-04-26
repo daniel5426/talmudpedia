@@ -716,7 +716,7 @@ class PublishedAppCodingAgentRuntimeService(
         self,
         *,
         app: PublishedApp,
-        base_revision: PublishedAppRevision,
+        base_revision: PublishedAppRevision | None,
         actor_id: UUID | None,
         user_prompt: str,
         requested_model_id: str | None,
@@ -738,8 +738,12 @@ class PublishedAppCodingAgentRuntimeService(
                 "surface": CODING_AGENT_SURFACE,
                 "published_app_id": str(app.id),
                 "app_id": str(app.id),
-                "base_revision_id": str(base_revision.id),
-                "entry_file": base_revision.entry_file,
+                "base_revision_id": str(base_revision.id) if base_revision is not None else None,
+                "entry_file": (
+                    str(base_revision.entry_file or "").strip()
+                    if base_revision is not None
+                    else "src/main.tsx"
+                ),
                 "requested_model_id": requested_model_id,
                 "resolved_model_id": resolved_model_id,
                 "execution_engine": CODING_AGENT_ENGINE_OPENCODE,
@@ -765,7 +769,7 @@ class PublishedAppCodingAgentRuntimeService(
             raise RuntimeError("Failed to load created prompt-async bookkeeping run")
         run.surface = CODING_AGENT_SURFACE
         run.published_app_id = app.id
-        run.base_revision_id = base_revision.id
+        run.base_revision_id = base_revision.id if base_revision is not None else None
         run.result_revision_id = None
         run.has_workspace_writes = False
         run.batch_finalized_at = None
@@ -780,7 +784,7 @@ class PublishedAppCodingAgentRuntimeService(
             app_id=str(app.id),
             run_id=str(run.id),
             chat_session_id=str(chat_session_id),
-            base_revision_id=str(base_revision.id),
+            base_revision_id=str(base_revision.id) if base_revision is not None else None,
             opencode_session_id=str(opencode_session_id or "") or None,
         )
         return run

@@ -145,7 +145,7 @@ async def test_auth_session_auto_switches_when_user_has_single_org_and_no_active
         await db_session.flush()
         return user
 
-    async def fake_switch_organization(self, request, response, organization_id, *, return_to=None):
+    async def fake_switch_organization(self, request, response, organization_id, *, return_to=None, sealed_session=None):
         assert organization_id == tenant.workos_organization_id
         return SimpleNamespace(user={"id": "wos_user_single"}, organization_id=tenant.workos_organization_id)
 

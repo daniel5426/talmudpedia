@@ -1553,6 +1553,73 @@ async def test_heartbeat_does_not_restore_live_snapshot_with_shared_builder_file
 
 
 @pytest.mark.asyncio
+async def test_sync_session_prefers_explicit_files_over_stored_live_snapshot(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    fake_client = _FakeSpriteRuntimeClient()
+
+    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: fake_client),
+    )
+
+    app, current_revision = await _seed_builder_app_and_revision(
+        db_session,
+        organization_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        name="Manual Save Prefers Explicit Files App",
+    )
+    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
+    session = await runtime_service.ensure_session(
+        app=app,
+        revision=current_revision,
+        user_id=user.id,
+        files=dict(current_revision.files or {}),
+        entry_file=current_revision.entry_file,
+    )
+    await db_session.commit()
+    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+    assert workspace is not None
+
+    stale_snapshot = {
+        "revision_id": str(current_revision.id),
+        "entry_file": current_revision.entry_file,
+        "files": {
+            **dict(current_revision.files or {}),
+            "src/App.tsx": "export default function App() { return <div>stale snapshot</div>; }",
+        },
+        "revision_token": "stale-token",
+        "workspace_fingerprint": "stale-fingerprint",
+        "updated_at": "2026-04-17T00:00:00+00:00",
+    }
+    session.backend_metadata = {**dict(session.backend_metadata or {}), "live_workspace_snapshot": stale_snapshot}
+    workspace.backend_metadata = {**dict(workspace.backend_metadata or {}), "live_workspace_snapshot": stale_snapshot}
+    await db_session.commit()
+
+    explicit_files = {
+        **dict(current_revision.files or {}),
+        "src/App.tsx": "export default function App() { return <div>explicit save</div>; }",
+    }
+
+    await runtime_service.sync_session(
+        app=app,
+        revision=current_revision,
+        user_id=user.id,
+        files=explicit_files,
+        entry_file=current_revision.entry_file,
+    )
+
+    assert fake_client.sync_calls, "expected sync_session to hit the runtime client"
+    synced_files = fake_client.sync_calls[-1]["files"]
+    assert synced_files["src/App.tsx"] == "export default function App() { return <div>explicit save</div>; }"
+
+
+@pytest.mark.asyncio
 async def test_coding_run_finalizer_creates_version_from_changed_final_workspace(
     db_session,
     monkeypatch: pytest.MonkeyPatch,

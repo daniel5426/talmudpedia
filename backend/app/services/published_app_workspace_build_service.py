@@ -8,6 +8,7 @@ import mimetypes
 import os
 import tarfile
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -95,6 +96,28 @@ class PublishedAppWorkspaceBuildService:
         except Exception:
             value = 0.5
         return max(0.1, value)
+
+    @staticmethod
+    def _dist_export_timeout_seconds() -> float:
+        raw = (os.getenv("APPS_WORKSPACE_BUILD_DIST_EXPORT_TIMEOUT_SECONDS") or "").strip()
+        try:
+            value = float(raw) if raw else 75.0
+        except Exception:
+            value = 75.0
+        return max(5.0, value)
+
+    @staticmethod
+    def _dist_upload_timeout_seconds() -> float:
+        raw = (os.getenv("APPS_WORKSPACE_BUILD_DIST_UPLOAD_TIMEOUT_SECONDS") or "").strip()
+        try:
+            value = float(raw) if raw else 75.0
+        except Exception:
+            value = 75.0
+        return max(5.0, value)
+
+    @staticmethod
+    def _duration_ms(started_at: float) -> int:
+        return max(0, int((time.monotonic() - started_at) * 1000))
 
     @classmethod
     def _is_stale_build(cls, build: PublishedAppWorkspaceBuild) -> bool:
@@ -441,22 +464,73 @@ class PublishedAppWorkspaceBuildService:
             sandbox_id = str(workspace.sandbox_id or "").strip()
         if not live_preview_dist_path:
             raise PublishedAppWorkspaceBuildError("Watcher-ready build is missing a dist path.")
-        archive_response = await self.runtime_service.client.export_workspace_archive(
+        self._trace(
+            "build.promote_watcher.export_begin",
+            app_id=app.id,
+            workspace_build_id=str(build.id),
             sandbox_id=sandbox_id,
-            workspace_path=live_preview_dist_path,
-            format="tar.gz",
+            live_preview_dist_path=live_preview_dist_path,
+            live_preview_build_id=str(live_preview_metadata.get("last_successful_build_id") or "").strip() or None,
+            timeout_seconds=self._dist_export_timeout_seconds(),
         )
+        export_started_at = time.monotonic()
+        try:
+            archive_response = await asyncio.wait_for(
+                self.runtime_service.client.export_workspace_archive(
+                    sandbox_id=sandbox_id,
+                    workspace_path=live_preview_dist_path,
+                    format="tar.gz",
+                ),
+                timeout=self._dist_export_timeout_seconds(),
+            )
+        except asyncio.TimeoutError as exc:
+            self._trace(
+                "build.promote_watcher.export_timeout",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                sandbox_id=sandbox_id,
+                live_preview_dist_path=live_preview_dist_path,
+                duration_ms=self._duration_ms(export_started_at),
+            )
+            raise PublishedAppWorkspaceBuildError("Timed out exporting watcher-ready dist from preview sandbox.") from exc
+        self._trace(
+            "build.promote_watcher.export_done",
+            app_id=app.id,
+            workspace_build_id=str(build.id),
+            sandbox_id=sandbox_id,
+            live_preview_dist_path=live_preview_dist_path,
+            duration_ms=self._duration_ms(export_started_at),
+            archive_base64_bytes=len(str(archive_response.get("archive_base64") or "").encode("utf-8"))
+            if isinstance(archive_response, dict)
+            else None,
+        )
+
+        decode_started_at = time.monotonic()
         archive_bytes = self.runtime_service.client.decode_archive_payload(archive_response)
+        self._trace(
+            "build.promote_watcher.decode_done",
+            app_id=app.id,
+            workspace_build_id=str(build.id),
+            duration_ms=self._duration_ms(decode_started_at),
+            archive_bytes=len(archive_bytes),
+        )
         with tempfile.TemporaryDirectory(prefix=f"apps-live-preview-{str(app.id)[:8]}-") as temp_dir:
             extract_dir = Path(temp_dir) / "dist"
             extract_dir.mkdir(parents=True, exist_ok=True)
             archive_path = Path(temp_dir) / "dist.tar.gz"
             archive_path.write_bytes(archive_bytes)
+            extract_started_at = time.monotonic()
             with tarfile.open(archive_path, mode="r:gz") as tar:
                 tar.extractall(path=extract_dir)
             dist_root = self._normalize_extracted_dist_root(extract_dir)
             if not dist_root.exists() or not dist_root.is_dir():
                 raise PublishedAppWorkspaceBuildError("Watcher-ready dist directory is unavailable.")
+            self._trace(
+                "build.promote_watcher.extract_done",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                duration_ms=self._duration_ms(extract_started_at),
+            )
             dist_manifest = self._build_dist_manifest(dist_root)
             dist_manifest["source_fingerprint"] = source_fingerprint
             dist_manifest["workspace_revision_token"] = workspace_revision_token
@@ -469,10 +543,45 @@ class PublishedAppWorkspaceBuildService:
                 app_id=str(app.id),
                 workspace_build_id=str(build.id),
             )
-            dist_manifest["uploaded_assets"] = self._upload_dist_dir(
-                storage=storage,
-                dist_dir=dist_root,
+            upload_started_at = time.monotonic()
+            asset_count = len(dist_manifest.get("assets") or [])
+            self._trace(
+                "build.promote_watcher.upload_begin",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
                 dist_storage_prefix=dist_storage_prefix,
+                asset_count=asset_count,
+                timeout_seconds=self._dist_upload_timeout_seconds(),
+            )
+            try:
+                uploaded_assets = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._upload_dist_dir,
+                        storage=storage,
+                        dist_dir=dist_root,
+                        dist_storage_prefix=dist_storage_prefix,
+                    ),
+                    timeout=self._dist_upload_timeout_seconds(),
+                )
+            except asyncio.TimeoutError as exc:
+                self._trace(
+                    "build.promote_watcher.upload_timeout",
+                    app_id=app.id,
+                    workspace_build_id=str(build.id),
+                    dist_storage_prefix=dist_storage_prefix,
+                    asset_count=asset_count,
+                    duration_ms=self._duration_ms(upload_started_at),
+                )
+                raise PublishedAppWorkspaceBuildError("Timed out uploading watcher-ready dist artifacts.") from exc
+            dist_manifest["uploaded_assets"] = uploaded_assets
+            self._trace(
+                "build.promote_watcher.upload_done",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                dist_storage_prefix=dist_storage_prefix,
+                asset_count=asset_count,
+                uploaded_assets=uploaded_assets,
+                duration_ms=self._duration_ms(upload_started_at),
             )
             build.dist_storage_prefix = dist_storage_prefix
             build.dist_manifest = dist_manifest
@@ -487,9 +596,10 @@ class PublishedAppWorkspaceBuildService:
         origin_kind: str,
         origin_run_id: UUID | None = None,
     ) -> ReadyWorkspaceBuildResult:
+        app_id = app.id
         self._trace(
             "build.ensure_ready.begin",
-            app_id=app.id,
+            app_id=app_id,
             source_revision_id=str(source_revision_id or "") or None,
             origin_kind=origin_kind,
             origin_run_id=str(origin_run_id or "") or None,
@@ -585,28 +695,51 @@ class PublishedAppWorkspaceBuildService:
                 )
             if build.status == PublishedAppWorkspaceBuildStatus.building:
                 if not self._is_stale_build(build):
-                    waited_build = await self._wait_for_existing_build_result(
-                        app_id=app.id,
-                        build_id=build.id,
+                    live_preview_metadata = await self._refresh_workspace_live_preview(workspace=workspace)
+                    live_preview_matched, live_preview_match_mode = self._live_preview_matches_workspace_state(
+                        live_preview_metadata=live_preview_metadata,
                         workspace_fingerprint=source_fingerprint,
-                    )
-                    return ReadyWorkspaceBuildResult(
-                        build=waited_build,
-                        source_files=source_files,
-                        build_files=build_files,
-                        source_fingerprint=source_fingerprint,
                         workspace_revision_token=workspace_revision_token,
-                        reused=True,
                     )
-                self._trace(
-                    "build.reclaim_stale",
-                    app_id=app.id,
-                    workspace_build_id=str(build.id),
-                    workspace_fingerprint=source_fingerprint,
-                    previous_started_at=build.build_started_at.isoformat()
-                    if isinstance(build.build_started_at, datetime)
-                    else None,
-                )
+                    if live_preview_matched:
+                        self._trace(
+                            "build.reclaim_active_from_ready_watcher",
+                            app_id=app.id,
+                            workspace_build_id=str(build.id),
+                            workspace_fingerprint=source_fingerprint,
+                            match_mode=live_preview_match_mode,
+                            live_preview_build_id=str(
+                                live_preview_metadata.get("last_successful_build_id") or ""
+                            ).strip()
+                            or None,
+                        )
+                    else:
+                        waited_build = await self._wait_for_existing_build_result(
+                            app_id=app.id,
+                            build_id=build.id,
+                            workspace_fingerprint=source_fingerprint,
+                        )
+                        return ReadyWorkspaceBuildResult(
+                            build=waited_build,
+                            source_files=source_files,
+                            build_files=build_files,
+                            source_fingerprint=source_fingerprint,
+                            workspace_revision_token=workspace_revision_token,
+                            reused=True,
+                        )
+                else:
+                    self._trace(
+                        "build.reclaim_stale",
+                        app_id=app.id,
+                        workspace_build_id=str(build.id),
+                        workspace_fingerprint=source_fingerprint,
+                        previous_started_at=build.build_started_at.isoformat()
+                        if isinstance(build.build_started_at, datetime)
+                        else None,
+                    )
+            else:
+                live_preview_metadata = None
+                live_preview_match_mode = None
             self._trace(
                 "build.row_update.begin",
                 app_id=app.id,
@@ -658,12 +791,13 @@ class PublishedAppWorkspaceBuildService:
                 workspace_fingerprint=source_fingerprint,
             )
 
-            live_preview_metadata, live_preview_match_mode = await self._wait_for_matching_watcher_build(
-                workspace=workspace,
-                app_id=app.id,
-                workspace_fingerprint=source_fingerprint,
-                workspace_revision_token=workspace_revision_token,
-            )
+            if live_preview_metadata is None:
+                live_preview_metadata, live_preview_match_mode = await self._wait_for_matching_watcher_build(
+                    workspace=workspace,
+                    app_id=app.id,
+                    workspace_fingerprint=source_fingerprint,
+                    workspace_revision_token=workspace_revision_token,
+                )
             self._trace(
                 "build.promote_watcher.begin",
                 app_id=app.id,
@@ -712,7 +846,7 @@ class PublishedAppWorkspaceBuildService:
             build_id = str(build.id) if "build" in locals() and getattr(build, "id", None) is not None else None
             self._trace(
                 "build.exception",
-                app_id=app.id,
+                app_id=app_id,
                 workspace_build_id=build_id,
                 workspace_fingerprint=locals().get("source_fingerprint"),
                 error=str(exc),
@@ -725,33 +859,33 @@ class PublishedAppWorkspaceBuildService:
                 build.build_finished_at = datetime.now(timezone.utc)
                 self._trace(
                     "build.failed.flush_begin",
-                    app_id=app.id,
+                    app_id=app_id,
                     workspace_build_id=build_id,
                     workspace_fingerprint=locals().get("source_fingerprint"),
                 )
                 await self.db.flush()
                 self._trace(
                     "build.failed.flush_done",
-                    app_id=app.id,
+                    app_id=app_id,
                     workspace_build_id=build_id,
                     workspace_fingerprint=locals().get("source_fingerprint"),
                 )
                 self._trace(
                     "build.failed.commit_begin",
-                    app_id=app.id,
+                    app_id=app_id,
                     workspace_build_id=build_id,
                     workspace_fingerprint=locals().get("source_fingerprint"),
                 )
                 await self.db.commit()
                 self._trace(
                     "build.failed.commit_done",
-                    app_id=app.id,
+                    app_id=app_id,
                     workspace_build_id=build_id,
                     workspace_fingerprint=locals().get("source_fingerprint"),
                 )
             self._trace(
                 "build.failed",
-                app_id=app.id,
+                app_id=app_id,
                 workspace_build_id=build_id,
                 workspace_fingerprint=locals().get("source_fingerprint"),
                 error=str(exc),

@@ -78,6 +78,40 @@ from .published_apps_preview_auth import (
 )
 
 logger = logging.getLogger(__name__)
+_APP_INIT_MATERIALIZATION_IN_FLIGHT: set[UUID] = set()
+_APP_INIT_MATERIALIZATION_RETRY_DELAYS_SECONDS = (0.0, 5.0, 15.0)
+
+
+def _is_watcher_materialization_not_ready(exc: Exception) -> bool:
+    message = str(exc or "").lower()
+    return (
+        "timed out waiting for watcher-owned workspace materialization" in message
+        or "timed out waiting for a watcher-ready build" in message
+        or "workspace watcher materialization failed" in message
+    )
+
+
+def _schedule_initial_app_init_materialization(*, app_id: UUID, actor_id: UUID) -> bool:
+    if app_id in _APP_INIT_MATERIALIZATION_IN_FLIGHT:
+        apps_builder_trace(
+            "app_init.materialize.schedule_skipped",
+            domain="draft_dev.api",
+            app_id=str(app_id),
+            actor_id=str(actor_id),
+            reason="already_in_flight",
+        )
+        return False
+    _APP_INIT_MATERIALIZATION_IN_FLIGHT.add(app_id)
+
+    async def _runner() -> None:
+        try:
+            await _materialize_initial_app_init_revision_detached(app_id=app_id, actor_id=actor_id)
+        finally:
+            _APP_INIT_MATERIALIZATION_IN_FLIGHT.discard(app_id)
+
+    asyncio.create_task(_runner())
+    return True
+
 
 async def _decorate_draft_dev_session_response(
     *,
@@ -123,30 +157,67 @@ async def _materialize_initial_app_init_revision_detached(
     app_id: UUID,
     actor_id: UUID,
 ) -> None:
-    async with db_sessionmaker() as task_db:
-        try:
-            app = await task_db.get(PublishedApp, app_id)
-            if app is None or app.current_draft_revision_id is not None:
+    for attempt_index, retry_delay in enumerate(_APP_INIT_MATERIALIZATION_RETRY_DELAYS_SECONDS, start=1):
+        if retry_delay > 0:
+            await asyncio.sleep(retry_delay)
+        async with db_sessionmaker() as task_db:
+            try:
+                app = await task_db.get(PublishedApp, app_id)
+                if app is None or app.current_draft_revision_id is not None:
+                    return
+                _, entry_file = _build_initial_template_files(app)
+                materializer = PublishedAppDraftRevisionMaterializerService(task_db)
+                result = await materializer.materialize_live_workspace(
+                    app=app,
+                    entry_file=entry_file,
+                    source_revision_id=None,
+                    created_by=actor_id,
+                    origin_kind="app_init",
+                )
+                runtime_service = PublishedAppDraftDevRuntimeService(task_db)
+                await runtime_service.bind_session_to_revision_without_sync(
+                    app_id=app_id,
+                    user_id=actor_id,
+                    revision=result.revision,
+                )
+                await task_db.commit()
                 return
-            _, entry_file = _build_initial_template_files(app)
-            materializer = PublishedAppDraftRevisionMaterializerService(task_db)
-            result = await materializer.materialize_live_workspace(
-                app=app,
-                entry_file=entry_file,
-                source_revision_id=None,
-                created_by=actor_id,
-                origin_kind="app_init",
-            )
-            runtime_service = PublishedAppDraftDevRuntimeService(task_db)
-            await runtime_service.bind_session_to_revision_without_sync(
-                app_id=app.id,
-                user_id=actor_id,
-                revision=result.revision,
-            )
-            await task_db.commit()
-        except Exception:
-            await task_db.rollback()
-            logger.exception("APP_INIT detached materialization failed app_id=%s actor_id=%s", app_id, actor_id)
+            except PublishedAppDraftRevisionMaterializerError as exc:
+                await task_db.rollback()
+                if _is_watcher_materialization_not_ready(exc):
+                    remaining_attempts = len(_APP_INIT_MATERIALIZATION_RETRY_DELAYS_SECONDS) - attempt_index
+                    apps_builder_trace(
+                        "app_init.materialize.watcher_not_ready",
+                        domain="draft_dev.api",
+                        app_id=str(app_id),
+                        actor_id=str(actor_id),
+                        attempt=attempt_index,
+                        remaining_attempts=remaining_attempts,
+                        error=str(exc),
+                    )
+                    if remaining_attempts > 0:
+                        logger.warning(
+                            "APP_INIT materialization waiting for watcher app_id=%s actor_id=%s attempt=%s remaining=%s error=%s",
+                            app_id,
+                            actor_id,
+                            attempt_index,
+                            remaining_attempts,
+                            exc,
+                        )
+                        continue
+                    logger.warning(
+                        "APP_INIT materialization deferred because watcher build is not ready app_id=%s actor_id=%s error=%s",
+                        app_id,
+                        actor_id,
+                        exc,
+                    )
+                    return
+                logger.exception("APP_INIT detached materialization failed app_id=%s actor_id=%s", app_id, actor_id)
+                return
+            except Exception:
+                await task_db.rollback()
+                logger.exception("APP_INIT detached materialization failed app_id=%s actor_id=%s", app_id, actor_id)
+                return
 
 
 async def _delete_runtime_file_if_present(
@@ -439,11 +510,9 @@ async def ensure_builder_draft_dev_session(
     )
     await db.commit()
     if scheduled_initial_app_init:
-        asyncio.create_task(
-            _materialize_initial_app_init_revision_detached(
-                app_id=app.id,
-                actor_id=actor.id,
-            )
+        _schedule_initial_app_init_materialization(
+            app_id=app.id,
+            actor_id=actor.id,
         )
     return response
 

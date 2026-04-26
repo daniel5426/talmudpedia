@@ -1,5 +1,7 @@
 "use client";
 
+import { normalizeAppsBuilderPreviewRoute } from "@/services/apps-builder-preview-routes";
+
 export type PreviewTransportStatus = "idle" | "booting" | "ready" | "reconnecting" | "failed";
 
 export function logBuilderPreviewDebug(scope: string, event: string, fields: Record<string, unknown> = {}): void {
@@ -13,16 +15,7 @@ export function logBuilderPreviewDebug(scope: string, event: string, fields: Rec
 }
 
 export function normalizeBuilderPreviewRoute(route: string): string | null {
-  const raw = String(route || "").trim();
-  if (!raw) return null;
-  const [pathname] = raw.split(/[?#]/, 1);
-  const normalized = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  const collapsed = normalized.replace(/\/{2,}/g, "/");
-  if (!collapsed) return "/";
-  if (collapsed !== "/" && collapsed.endsWith("/")) {
-    return collapsed.slice(0, -1) || "/";
-  }
-  return collapsed;
+  return normalizeAppsBuilderPreviewRoute(route);
 }
 
 export function buildBuilderPreviewDocumentUrl(options: {

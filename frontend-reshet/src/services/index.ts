@@ -22,7 +22,6 @@ export type {
   CompileResult,
   PipelineToolBinding,
   PipelineJob,
-  CustomOperator,
   PipelineStepData,
 } from "./rag-admin";
 

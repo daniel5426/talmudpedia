@@ -1,4 +1,4 @@
-Last Updated: 2026-04-23
+Last Updated: 2026-04-26
 
 # Apps Builder Sandbox Runtime Tests
 
@@ -23,12 +23,13 @@ Last Updated: 2026-04-23
 - The draft-dev runtime client can also push live-preview context updates back to the selected sandbox backend after coding-run reconciliation.
 - The preview proxy enforces preview token validation before forwarding to the upstream Sprite URL.
 - The preview proxy can also bootstrap a fresh draft-dev session before any durable draft revision exists; builder preview auth/bootstrap now tolerates `revision_id = null` until the first `app_init` version materializes.
-- The preview proxy strips `runtime_token` from upstream requests, forwards provider-neutral auth headers, and sets the canonical `published_app_preview_token` cookie on successful bootstrap.
-- The preview proxy prefers the preview cookie over a stale bootstrap `runtime_token`, so old iframe URLs cannot override the current session scope after bootstrap.
-- The preview proxy falls back to the bootstrap `runtime_token` when the preview cookie belongs to a different app, so stale cross-app cookies cannot block a fresh session bootstrap.
+- The builder preview proxy now authenticates only from the query `runtime_token`; it ignores stale preview cookies entirely and fails fast when the query token is missing, invalid, expired, or scoped to the wrong session/revision.
+- The preview proxy strips `runtime_token` from upstream requests and forwards provider-neutral auth headers.
 - The builder preview password-login route maps throttled login attempts to HTTP `429`.
 - The builder preview Google OAuth start route sets a CSRF state cookie, and callback rejects missing state cookies.
-- The preview proxy now behaves as a static builder-preview proxy: it injects runtime context plus the session-scoped route bridge into HTML, and passes built assets through without Vite/HMR rewrites.
+- The preview proxy now behaves as a static builder-preview proxy: it injects runtime context plus the session-scoped route bridge into HTML, rewrites iframe history onto the real app pathname for router compatibility, and passes built assets through without Vite/HMR rewrites.
+- The preview proxy route bridge intercepts same-window anchor clicks and routes them through the app-history bridge so absolute app links do not escape the preview proxy frame.
+- The preview proxy route bridge preserves the requested `preview_route` during shim initialization instead of collapsing proxy-root document loads back to `/`.
 - The preview proxy exposes `/_talmudpedia/status` as a direct backend status contract backed by stored draft-dev metadata only, without preview-side heartbeat/restart side effects.
 - The preview proxy thread list/detail routes now call the canonical runtime-surface lifecycle/query service directly instead of going through host-runtime serializer wrappers.
 - The preview proxy exposes the canonical builder preview base path to the runtime SDK and no longer depends on query-plumbed runtime bootstrap URLs for steady-state builder preview.
@@ -58,6 +59,7 @@ Last Updated: 2026-04-23
 - Builder validation now requires a root `index.html`, and incremental sync validates projected patch operations before mutating the live Sprite workspace.
 - Builder `operations` sync now projects the full next workspace and applies it through one `sync_workspace_files()` call, so the watcher never sees a half-written multi-file edit batch.
 - Manual editor sync now uses the same direct watcher-backed materializer path as the other explicit version triggers; it no longer queues deferred save metadata for heartbeat/runtime follow-up.
+- Explicit manual-save sync now prefers the caller's submitted files over any stored `live_workspace_snapshot` for the same revision, so a full save cannot silently re-sync stale workspace content.
 - Coding-run finalization now snapshots the final live workspace, compares canonical fingerprints against the source draft revision, and creates at most one `coding_run` version only when the final workspace actually changed.
 - Coding-agent workspace-write detection ignores read-only `bash` probes like `git status`, while still flagging mutating shell commands and explicit write tools.
 - Live-preview build status normalization preserves the canonical `build_watch_static` contract, richer preview states (`booting`, `building`, `ready`, `failed_keep_last_good`, `failed_no_build`, `recovering`), supervisor health metadata, and stable workspace fingerprinting for build reuse.
@@ -76,9 +78,24 @@ Last Updated: 2026-04-23
 - Draft revision materialization reuses the current draft revision when the watcher/build fingerprint is unchanged, so a fresh app no longer creates a duplicate `live_preview` version from the same ready build as `app_init`.
 
 ## Last run command + date/time + result
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py -k 'builder_preview_proxy_injects_runtime_context_and_static_route_bridge or builder_preview_route_normalization_treats_proxy_paths_as_transport_internals'`
+- Date: 2026-04-26 Asia/Hebron
+- Result: PASS (`2 passed, 18 deselected`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py -k 'accepts_valid_token_and_forwards_sprite_auth or builder_preview_runtime_bootstrap_allows_revisionless_session or builder_preview_proxy_ignores_stale_preview_cookie_when_query_token_matches or builder_preview_proxy_requires_query_token_even_when_preview_cookie_is_present or builder_preview_proxy_rejects_wrong_scope_query_token_even_when_preview_cookie_is_present or builder_preview_proxy_rejects_invalid_query_token or builder_preview_proxy_injects_runtime_context_and_static_route_bridge or builder_preview_status_route_returns_stored_live_preview_without_heartbeat'`
+- Date: 2026-04-25 Asia/Hebron
+- Result: PASS (`8 passed, 9 deselected`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py -k 'builder_preview_proxy_injects_runtime_context_and_static_route_bridge'`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`1 passed, 15 deselected`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py -k 'builder_preview_proxy_injects_runtime_context_and_static_route_bridge or builder_preview_status_route_returns_stored_live_preview_without_heartbeat'`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`2 passed, 14 deselected`)
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'sync_route_batches_operations_into_single_workspace_sync or sync_route_validates_operations_before_mutating_runtime or sync_route_materializes_manual_save_directly_from_synced_workspace or heartbeat_preserves_existing_preview_base_path_when_refresh_returns_root or heartbeat_preserves_live_workspace_snapshot_metadata or ensure_endpoint_reuses_live_session_without_calling_legacy_ensure_session'`
 - Date: 2026-04-23 Asia/Hebron
 - Result: PASS (`6 passed, 17 deselected`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'test_sync_session_prefers_explicit_files_over_stored_live_snapshot or test_sync_route_materializes_manual_save_directly_from_synced_workspace'`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`2 passed, 22 deselected`)
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && SECRET_KEY=explicit-test-secret backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'materializer_reuses_current_revision_when_workspace_build_is_unchanged'`
 - Date: 2026-04-23 Asia/Hebron
 - Result: PASS (`2 passed, 24 deselected`)

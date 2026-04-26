@@ -35,6 +35,25 @@ def _request_with_session_cookie(value: str) -> Request:
     )
 
 
+def _request_without_session_cookie() -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/auth/callback",
+            "query_string": b"",
+            "scheme": "http",
+            "headers": [
+                (b"host", b"localhost:8026"),
+                (b"origin", b"http://localhost:3000"),
+                (b"referer", b"http://localhost:3000/"),
+            ],
+            "server": ("localhost", 8026),
+            "client": ("127.0.0.1", 12345),
+        }
+    )
+
+
 @pytest.mark.asyncio
 async def test_authenticate_request_uses_native_session_refresh(monkeypatch):
     monkeypatch.setenv("WORKOS_API_KEY", "sk_test")
@@ -133,6 +152,50 @@ async def test_authenticate_with_code_uses_native_workos_helper(monkeypatch):
         "user_agent": None,
         "invitation_token": "invite_123",
     }
+
+
+@pytest.mark.asyncio
+async def test_switch_organization_can_use_callback_sealed_session(monkeypatch):
+    monkeypatch.setenv("WORKOS_API_KEY", "sk_test")
+    monkeypatch.setenv("WORKOS_CLIENT_ID", "client_test")
+    monkeypatch.setenv("WORKOS_COOKIE_PASSWORD", "test-cookie-password")
+
+    calls: dict[str, object] = {}
+
+    class FakeSessionHelper:
+        def refresh(self, *, organization_id):
+            calls["refresh_organization_id"] = organization_id
+            return SimpleNamespace(authenticated=True, reason=None, sealed_session="org-session")
+
+    class FakeUserManagement:
+        def load_sealed_session(self, *, sealed_session, cookie_password):
+            calls["load_sealed_session"] = {
+                "sealed_session": sealed_session,
+                "cookie_password": cookie_password,
+            }
+            return FakeSessionHelper()
+
+    fake_client = SimpleNamespace(user_management=FakeUserManagement())
+    monkeypatch.setattr("app.services.workos_auth_service._workos_client", lambda: fake_client)
+
+    service = WorkOSAuthService(db=None)
+    request = _request_without_session_cookie()
+    response = Response()
+
+    switched = await service.switch_organization(
+        request,
+        response,
+        "org_123",
+        sealed_session="callback-session",
+    )
+
+    assert switched.authenticated is True
+    assert calls["load_sealed_session"] == {
+        "sealed_session": "callback-session",
+        "cookie_password": "test-cookie-password",
+    }
+    assert calls["refresh_organization_id"] == "org_123"
+    assert "wos_session=org-session" in response.headers["set-cookie"]
 
 
 @pytest.mark.asyncio

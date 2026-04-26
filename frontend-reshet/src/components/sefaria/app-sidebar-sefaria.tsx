@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Image from "next/image";
-import { Settings2, Bot, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText, LayoutDashboard, Users, MessageSquare, LogIn, Database, ShieldCheck, History, Landmark, Workflow, Settings, Play, Code2 } from "lucide-react";
+import { Settings2, Bot, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText, LayoutDashboard, Users, MessageSquare, LogIn, Database, ShieldCheck, History, Landmark, Workflow, Settings, Play } from "lucide-react";
 
 import { NavMain } from "@/components/sefaria/nav-main-sefaria";
 import { NavUser } from "@/components/navigation/nav-user";
@@ -97,11 +97,6 @@ const data = {
           title: "Knowledge Store",
           url: "/admin/rag/knowledge-stores",
           icon: Database,
-        },
-        {
-          title: "Operators",
-          url: "/admin/rag/operators",
-          icon: Code2,
         },
       ],
     },

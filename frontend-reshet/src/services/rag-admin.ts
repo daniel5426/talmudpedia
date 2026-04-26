@@ -99,39 +99,6 @@ export interface PipelineJob {
   created_at: string;
 }
 
-export interface CustomOperator {
-  id: string;
-  organization_id: string;
-  name: string;
-  display_name: string;
-  category: string;
-  description?: string;
-  python_code: string;
-  input_type: string;
-  output_type: string;
-  config_schema?: any[];
-  is_active: boolean;
-  version: string;
-  created_at: string;
-  updated_at: string;
-  created_by?: string;
-}
-
-export interface CustomOperatorTestRequest {
-  python_code: string;
-  input_data: any;
-  config: Record<string, any>;
-  input_type: string;
-  output_type: string;
-}
-
-export interface CustomOperatorTestResponse {
-  success: boolean;
-  data: any;
-  error_message?: string;
-  execution_time_ms: number;
-}
-
 export interface PipelineStepData {
   data: any;
   truncated_fields?: Record<string, {
@@ -200,10 +167,14 @@ class RAGAdminService {
     return httpClient.get<StepFieldContent>(`/admin/pipelines/jobs/${jobId}/steps/${stepId}/field?${params.toString()}`);
   }
 
-  async getOperatorCatalog(organizationId?: string): Promise<{ operators: NodeCatalogItem[] }> {
-    const url = organizationId 
-      ? `/admin/pipelines/catalog?organization_id=${organizationId}` 
-      : "/admin/pipelines/catalog";
+  async getOperatorCatalog(
+    pipelineType: "ingestion" | "retrieval",
+    organizationId?: string,
+  ): Promise<{ operators: NodeCatalogItem[] }> {
+    const query = new URLSearchParams();
+    query.set("pipeline_type", pipelineType);
+    if (organizationId) query.set("organization_id", organizationId);
+    const url = `/admin/pipelines/catalog?${query.toString()}`;
     return httpClient.get<{ operators: NodeCatalogItem[] }>(url);
   }
 
@@ -214,11 +185,18 @@ class RAGAdminService {
     return httpClient.get<NodeAuthoringSpec>(url);
   }
 
-  async listOperatorSpecs(operatorIds: string[], organizationId?: string): Promise<NodeSchemaResponse> {
+  async listOperatorSpecs(
+    pipelineType: "ingestion" | "retrieval",
+    operatorIds: string[],
+    organizationId?: string,
+  ): Promise<NodeSchemaResponse> {
     const url = organizationId
       ? `/admin/pipelines/operators/schema?organization_id=${organizationId}`
       : "/admin/pipelines/operators/schema";
-    return httpClient.post<NodeSchemaResponse>(url, { operator_ids: operatorIds });
+    return httpClient.post<NodeSchemaResponse>(url, {
+      pipeline_type: pipelineType,
+      operator_ids: operatorIds,
+    });
   }
 
   async listVisualPipelines(
@@ -396,77 +374,6 @@ class RAGAdminService {
     return httpClient.get<PipelineJob>(url);
   }
 
-  async createCustomOperator(
-    data: {
-      name?: string;
-      display_name: string;
-      category: string;
-      description?: string;
-      python_code: string;
-      input_type: string;
-      output_type: string;
-      config_schema?: any[];
-    },
-    organizationId?: string
-  ): Promise<CustomOperator> {
-    const url = organizationId
-      ? `/admin/rag/custom-operators?organization_id=${organizationId}`
-      : "/admin/rag/custom-operators";
-    return httpClient.post(url, data);
-  }
-
-  async listCustomOperators(organizationId?: string): Promise<CustomOperator[]> {
-    const url = organizationId
-      ? `/admin/rag/custom-operators?organization_id=${organizationId}`
-      : "/admin/rag/custom-operators";
-    return httpClient.get<CustomOperator[]>(url);
-  }
-
-  async getCustomOperator(id: string, organizationId?: string): Promise<CustomOperator> {
-    const url = organizationId
-      ? `/admin/rag/custom-operators/${id}?organization_id=${organizationId}`
-      : `/admin/rag/custom-operators/${id}`;
-    return httpClient.get<CustomOperator>(url);
-  }
-
-  async updateCustomOperator(
-    id: string,
-    data: Partial<Omit<CustomOperator, 'id' | 'organization_id' | 'created_at' | 'updated_at' | 'created_by'>>,
-    organizationId?: string
-  ): Promise<CustomOperator> {
-    const url = organizationId
-      ? `/admin/rag/custom-operators/${id}?organization_id=${organizationId}`
-      : `/admin/rag/custom-operators/${id}`;
-    return httpClient.put(url, data);
-  }
-
-  async deleteCustomOperator(id: string, organizationId?: string): Promise<{ status: string }> {
-    const url = organizationId
-      ? `/admin/rag/custom-operators/${id}?organization_id=${organizationId}`
-      : `/admin/rag/custom-operators/${id}`;
-    return httpClient.delete(url);
-  }
-
-  async testCustomOperator(
-    data: CustomOperatorTestRequest,
-    organizationId?: string
-  ): Promise<CustomOperatorTestResponse> {
-    const url = organizationId
-      ? `/admin/rag/custom-operators/test?organization_id=${organizationId}`
-      : "/admin/rag/custom-operators/test";
-    return httpClient.post(url, data);
-  }
-
-  async promoteCustomOperator(
-    id: string,
-    namespace: string = "custom",
-    organizationId?: string
-  ): Promise<{ status: string; artifact_id: string; path: string; version: string }> {
-    const url = organizationId
-      ? `/admin/rag/custom-operators/${id}/promote?organization_id=${organizationId}&namespace=${namespace}`
-      : `/admin/rag/custom-operators/${id}/promote?namespace=${namespace}`;
-    return httpClient.post(url, {});
-  }
 }
 
 

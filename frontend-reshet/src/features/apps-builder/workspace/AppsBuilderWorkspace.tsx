@@ -73,7 +73,9 @@ import {
   logBuilderPreviewDebug,
 } from "@/features/apps-builder/preview/previewTransport";
 import { useBuilderLivePreviewStatus } from "@/features/apps-builder/preview/useBuilderLivePreviewStatus";
+import { useBuilderPreviewRoute } from "@/features/apps-builder/preview/useBuilderPreviewRoute";
 import { useBuilderPreviewTransport } from "@/features/apps-builder/preview/useBuilderPreviewTransport";
+import { normalizeAppsBuilderPreviewRoute } from "@/services/apps-builder-preview-routes";
 import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel";
 import { FileTree } from "@/features/apps-builder/editor/FileTree";
 import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
@@ -232,104 +234,6 @@ function builderWorkspaceReducer(state: BuilderWorkspaceState, action: BuilderWo
   }
 }
 
-function normalizeRoutePath(route: string): string | null {
-  const trimmed = String(route || "").trim();
-  if (!trimmed || trimmed.includes("${")) return null;
-  const [pathname] = trimmed.split(/[?#]/);
-  if (!pathname) return null;
-  const normalized = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  const compact = normalized.replace(/\/{2,}/g, "/");
-  if (compact !== "/" && compact.endsWith("/")) {
-    return compact.slice(0, -1);
-  }
-  return compact || "/";
-}
-
-function isAssetLikeRoute(route: string): boolean {
-  if (!route || route === "/") return false;
-  const lastSegment = route.split("/").filter(Boolean).pop() || "";
-  return /\.[a-z0-9]{2,8}$/i.test(lastSegment);
-}
-
-function routeFromFilePath(filePath: string): string | null {
-  const normalized = filePath.replace(/\\/g, "/");
-  const appMatch = normalized.match(/(?:^|\/)(?:src\/)?app\/(.+)\/page\.(?:tsx|ts|jsx|js|mdx)$/);
-  if (appMatch) {
-    const segments = appMatch[1]
-      .split("/")
-      .filter(Boolean)
-      .filter((segment) => !segment.startsWith("(") && !segment.startsWith("@"));
-    if (segments.some((segment) => segment.startsWith("[") || segment.startsWith(":"))) {
-      return null;
-    }
-    return normalizeRoutePath(`/${segments.join("/")}`);
-  }
-
-  const pagesMatch = normalized.match(/(?:^|\/)(?:src\/)?pages\/(.+)\.(?:tsx|ts|jsx|js|mdx)$/);
-  if (pagesMatch) {
-    const relativePath = pagesMatch[1].replace(/\/index$/, "");
-    if (!relativePath || relativePath === "index") {
-      return "/";
-    }
-    if (relativePath.startsWith("api/")) {
-      return null;
-    }
-    if (relativePath.split("/").some((segment) => segment.startsWith("[") || segment.startsWith(":"))) {
-      return null;
-    }
-    return normalizeRoutePath(`/${relativePath}`);
-  }
-
-  return null;
-}
-
-/** Extract route paths from app source files by matching router usage and file-based routes. */
-function extractRoutesFromFiles(files: Record<string, string>): string[] {
-  const routes = new Set<string>();
-  routes.add("/");
-
-  for (const [filePath, content] of Object.entries(files)) {
-    const fileRoute = routeFromFilePath(filePath);
-    if (fileRoute && !isAssetLikeRoute(fileRoute)) {
-      routes.add(fileRoute);
-    }
-
-    // Match <Route path="/something" ... />
-    const jsxRouteRe = /path\s*[=:]\s*["'`](\/[^"'`]*)["'`]/g;
-    let match: RegExpExecArray | null;
-    while ((match = jsxRouteRe.exec(content)) !== null) {
-      const route = normalizeRoutePath(match[1]);
-      if (route && !route.includes(":") && !isAssetLikeRoute(route)) {
-        routes.add(route);
-      }
-    }
-
-    // Match navigate("/something")
-    const navigateRe = /navigate\(\s*["'`](\/[^"'`]*)["'`]/g;
-    while ((match = navigateRe.exec(content)) !== null) {
-      const route = normalizeRoutePath(match[1]);
-      if (route && !route.includes(":") && !isAssetLikeRoute(route)) {
-        routes.add(route);
-      }
-    }
-
-    // Match href="/something", to="/something", pathname: "/something"
-    const linkToRe = /(?:href|to|pathname)\s*[:=]\s*["'`](\/[^"'`]*)["'`]/g;
-    while ((match = linkToRe.exec(content)) !== null) {
-      const route = normalizeRoutePath(match[1]);
-      if (route && !route.includes(":") && !isAssetLikeRoute(route)) {
-        routes.add(route);
-      }
-    }
-  }
-
-  return Array.from(routes).sort((a, b) => {
-    if (a === "/") return -1;
-    if (b === "/") return 1;
-    return a.localeCompare(b);
-  });
-}
-
 function buildDraftDevSyncFingerprint(entry: string, nextFiles: Record<string, string>): string {
   return JSON.stringify({
     entry,
@@ -416,16 +320,28 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [isExportingArchive, setIsExportingArchive] = useState(false);
   const [exportOptions, setExportOptions] = useState<PublishedAppExportOptions | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [previewRoute, setPreviewRoute] = useState("/");
-  const [previewRouteInput, setPreviewRouteInput] = useState("/");
-  const [isPreviewRoutePickerOpen, setIsPreviewRoutePickerOpen] = useState(false);
   const [previewReloadToken, setPreviewReloadToken] = useState(0);
   const [previewMode, setPreviewMode] = useState<"preview" | "version_code">("preview");
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
   const [isLogoDialogOpen, setIsLogoDialogOpen] = useState(false);
   const [domainCopied, setDomainCopied] = useState(false);
   const lastSavedCodeFingerprintRef = useRef<string>("");
+  const pendingManualSaveFingerprintRef = useRef<string | null>(null);
   const initializedAppIdRef = useRef<string | null>(null);
+  const {
+    previewRoute,
+    previewRouteInput,
+    isPreviewRoutePickerOpen,
+    rankedAppRoutes,
+    preserveVisibleFrameOnRouteSync,
+    setPreviewRouteInput,
+    setIsPreviewRoutePickerOpen,
+    navigatePreview,
+    handlePreviewRouteChange,
+  } = useBuilderPreviewRoute({
+    files,
+    resetKey: appId,
+  });
 
   useEffect(() => {
     setOpen(false);
@@ -436,8 +352,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setDomains([]);
     setHasLoadedUsers(false);
     setHasLoadedDomains(false);
-    setPreviewRoute("/");
-    setPreviewRouteInput("/");
     setPreviewReloadToken(0);
     setPostRunHydrationPending(false);
     dispatchWorkspace({ type: "reset" });
@@ -487,7 +401,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     });
   }, []);
 
-  const applyDraftDevSessionToBuilderState = useCallback((session: DraftDevSessionResponse | null) => {
+  const setDraftDevSessionState = useCallback((session: DraftDevSessionResponse | null) => {
     setState((prev) => {
       if (!prev) return prev;
       return {
@@ -495,7 +409,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         draft_dev: session,
       };
     });
-    const liveSnapshotRevision = extractLiveWorkspaceSnapshot(session);
     logBuilderWorkspaceDebug("draft_dev_session_applied", {
       sessionId: session?.session_id || null,
       draftDevStatus: session?.status || null,
@@ -507,6 +420,11 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       liveSnapshotUpdatedAt: session?.live_workspace_snapshot?.updated_at || null,
       liveSnapshotFileCount: session?.live_workspace_snapshot?.files ? Object.keys(session.live_workspace_snapshot.files).length : 0,
     });
+  }, []);
+
+  const applyDraftDevSessionToBuilderState = useCallback((session: DraftDevSessionResponse | null) => {
+    setDraftDevSessionState(session);
+    const liveSnapshotRevision = extractLiveWorkspaceSnapshot(session);
     if (!liveSnapshotRevision) {
       return;
     }
@@ -514,6 +432,37 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     const nextEntry = liveSnapshotRevision.entry_file || DEFAULT_ENTRY_FILE;
     const nextFingerprint = buildDraftDevSyncFingerprint(nextEntry, nextFiles);
     const currentFingerprint = buildDraftDevSyncFingerprint(entryFile, files);
+    const hasCleanSavedWorkspace = (
+      !workspaceState.dirty
+      && !workspaceState.conflict
+      && Boolean(lastSavedCodeFingerprintRef.current)
+      && currentFingerprint === lastSavedCodeFingerprintRef.current
+    );
+    if (hasCleanSavedWorkspace && nextFingerprint !== currentFingerprint && !postRunHydrationPending) {
+      logBuilderWorkspaceDebug("draft_dev_session_ignored_stale_saved_workspace", {
+        sessionId: session?.session_id || null,
+        draftDevStatus: session?.status || null,
+        liveSnapshotRevisionId: liveSnapshotRevision.id || null,
+        currentRevisionId,
+        nextFingerprint,
+        currentFingerprint,
+        workspaceSource,
+      });
+      return;
+    }
+    const pendingManualSaveFingerprint = pendingManualSaveFingerprintRef.current;
+    if (pendingManualSaveFingerprint && currentFingerprint === pendingManualSaveFingerprint && nextFingerprint !== currentFingerprint) {
+      logBuilderWorkspaceDebug("draft_dev_session_ignored_during_manual_save", {
+        sessionId: session?.session_id || null,
+        draftDevStatus: session?.status || null,
+        liveSnapshotRevisionId: liveSnapshotRevision.id || null,
+        currentRevisionId,
+        pendingManualSaveFingerprint,
+        nextFingerprint,
+        currentFingerprint,
+      });
+      return;
+    }
     const replacedDirtyLocalState = workspaceState.dirty && nextFingerprint !== currentFingerprint;
     if (replacedDirtyLocalState) {
       dispatchWorkspace({
@@ -536,7 +485,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       },
     });
     lastSavedCodeFingerprintRef.current = nextFingerprint;
-  }, [entryFile, files, postRunHydrationPending, workspaceState.dirty]);
+  }, [currentRevisionId, entryFile, files, postRunHydrationPending, setDraftDevSessionState, workspaceSource, workspaceState.conflict, workspaceState.dirty]);
 
   const {
     phase: sandboxPhase,
@@ -614,14 +563,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setPostRunPreviewPollState(null);
   }, [currentLastSuccessfulBuildId, postRunPreviewPollState]);
 
-  const appRoutes = useMemo(() => extractRoutesFromFiles(files), [files]);
-  const filteredAppRoutes = useMemo(() => {
-    const query = previewRouteInput.trim().toLowerCase();
-    if (!query) {
-      return appRoutes;
-    }
-    return appRoutes.filter((route) => route.toLowerCase().includes(query));
-  }, [appRoutes, previewRouteInput]);
   const orderedTemplates = useMemo(() => sortTemplates(state?.templates || []), [state?.templates]);
   const platformDomain = useMemo(
     () => `${state?.app.public_id || "app"}.${process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost"}`,
@@ -640,20 +581,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     lifecyclePhase: sandboxPhase,
     lastError: draftDevError,
   });
-  const navigatePreview = useCallback((route: string) => {
-    const normalizedRoute = normalizeRoutePath(route) || "/";
-    setPreviewRoute(normalizedRoute);
-    setPreviewRouteInput(normalizedRoute);
-    setIsPreviewRoutePickerOpen(false);
-  }, []);
-
   const reloadPreview = useCallback(() => {
     setPreviewReloadToken((current) => current + 1);
   }, []);
-
-  useEffect(() => {
-    setPreviewRouteInput(previewRoute);
-  }, [previewRoute]);
 
   const loadState = useCallback(async ({ showInitialSkeleton = false }: { showInitialSkeleton?: boolean } = {}) => {
     if (showInitialSkeleton) {
@@ -1138,16 +1068,33 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
     setIsSaving(true);
     setError(null);
+    const saveFingerprint = buildDraftDevSyncFingerprint(entryFile, files);
+    pendingManualSaveFingerprintRef.current = saveFingerprint;
     try {
       await ensureDraftDevSession();
       const session = await syncDraftDevSession({ forceFullSync: true });
       if (!session) {
         throw new Error("Draft preview sandbox was not ready to save. Wait for preview to finish warming and try again.");
       }
-      lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(entryFile, files);
-      applyDraftDevSessionToBuilderState(session);
-      void Promise.all([refreshStateSilently(), refreshVersions()]);
+      lastSavedCodeFingerprintRef.current = saveFingerprint;
+      setDraftDevSessionState(session);
+      dispatchWorkspace({
+        type: "hydrate",
+        payload: {
+          files,
+          entryFile,
+          revisionId: session.revision_id || currentRevisionId,
+          workspaceRevisionToken: session.workspace_revision_token || session.live_workspace_snapshot?.revision_token || workspaceRevisionToken,
+          workspaceSource: "live_session",
+          preserveSelection: true,
+          notice: null,
+          conflict: false,
+        },
+      });
+      pendingManualSaveFingerprintRef.current = null;
+      void refreshVersions();
     } catch (err: any) {
+      pendingManualSaveFingerprintRef.current = null;
       const detail = err?.message || "Failed to save draft";
       try {
         const parsed = JSON.parse(detail) as RevisionConflictResponse;
@@ -1161,9 +1108,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       }
       setError(err instanceof Error ? err.message : "Failed to save draft");
     } finally {
+      pendingManualSaveFingerprintRef.current = null;
       setIsSaving(false);
     }
-  }, [applyDraftDevSessionToBuilderState, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, refreshStateSilently, refreshVersions, saveBlockedByBackendLock, syncDraftDevSession]);
+  }, [currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, refreshVersions, saveBlockedByBackendLock, setDraftDevSessionState, syncDraftDevSession, workspaceRevisionToken]);
 
   const publish = useCallback(async () => {
     if (sandboxActionsBlocked) {
@@ -1515,7 +1463,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                                 No routes found
                               </CommandEmpty>
                               <CommandGroup>
-                                {filteredAppRoutes.map((route) => (
+                                {rankedAppRoutes.map((route) => (
                                   <CommandItem
                                     key={route}
                                     value={route}
@@ -1526,14 +1474,14 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                                     {route === previewRoute ? <Check className="h-3.5 w-3.5 text-muted-foreground" /> : null}
                                   </CommandItem>
                                 ))}
-                                {normalizeRoutePath(previewRouteInput)
-                                  && !filteredAppRoutes.includes(normalizeRoutePath(previewRouteInput) as string) ? (
+                                {normalizeAppsBuilderPreviewRoute(previewRouteInput)
+                                  && !rankedAppRoutes.includes(normalizeAppsBuilderPreviewRoute(previewRouteInput) as string) ? (
                                     <CommandItem
                                       value={previewRouteInput}
                                       onSelect={() => navigatePreview(previewRouteInput)}
                                       className="flex items-center justify-between text-xs"
                                     >
-                                      <span>{normalizeRoutePath(previewRouteInput)}</span>
+                                      <span>{normalizeAppsBuilderPreviewRoute(previewRouteInput)}</span>
                                       <span className="text-[10px] text-muted-foreground">go</span>
                                     </CommandItem>
                                   ) : null}
@@ -1736,6 +1684,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                         canRetry={!isInspectingVersion && canRetrySandboxLifecycle}
                         onFrameReady={isInspectingVersion ? null : livePreviewTransport.markFrameUsable}
                         onFrameCleared={isInspectingVersion ? null : livePreviewTransport.clearUsableFrame}
+                        onPreviewRouteChange={isInspectingVersion ? null : handlePreviewRouteChange}
+                        preserveVisibleFrameOnRouteSync={!isInspectingVersion && preserveVisibleFrameOnRouteSync}
                         onRetry={isInspectingVersion ? null : () => {
                           void retryEnsureDraftDevSession();
                         }}

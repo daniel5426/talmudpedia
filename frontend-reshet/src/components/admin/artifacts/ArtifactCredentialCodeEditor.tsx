@@ -17,6 +17,9 @@ type ParsedSourceFile = ts.SourceFile & {
 const ARTIFACT_DEP_MARKER_OWNER = "artifact-dependencies"
 const ARTIFACT_SYNTAX_MARKER_OWNER = "artifact-syntax"
 
+const monacoPathForArtifactFile = (path: string | undefined): string =>
+  `file:///artifact/${encodeURI(path || "untitled")}`
+
 interface ArtifactCredentialCodeEditorProps {
   value: string
   onChange: (value: string) => void
@@ -261,7 +264,9 @@ export function ArtifactCredentialCodeEditor({
       <Editor
         height={height}
         language={editorLanguage}
+        path={monacoPathForArtifactFile(activeFilePath)}
         value={value}
+        keepCurrentModel
         onChange={(nextValue) => {
           onChange(nextValue || "")
           queueMicrotask(() => {

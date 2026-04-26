@@ -324,9 +324,9 @@ class WorkOSAuthService:
             samesite="lax",
         )
 
-    def _load_session_helper(self, request: Request) -> Any | None:
+    def _load_session_helper(self, request: Request, *, sealed_session: str | None = None) -> Any | None:
         self._require_enabled()
-        sealed_session = str(request.cookies.get(WORKOS_SESSION_COOKIE_NAME) or "").strip()
+        sealed_session = str(sealed_session or request.cookies.get(WORKOS_SESSION_COOKIE_NAME) or "").strip()
         if not sealed_session:
             self._auth_debug_log("load_session_helper.missing_cookie", request=request)
             return None
@@ -447,8 +447,9 @@ class WorkOSAuthService:
         organization_id: str,
         *,
         return_to: str | None = None,
+        sealed_session: str | None = None,
     ) -> Any:
-        helper = self._load_session_helper(request)
+        helper = self._load_session_helper(request, sealed_session=sealed_session)
         if helper is None:
             raise WorkOSAuthError("No active WorkOS session")
         refreshed = helper.refresh(organization_id=organization_id)
@@ -881,6 +882,7 @@ class WorkOSAuthService:
                 response,
                 organization.workos_organization_id,
                 return_to=return_to,
+                sealed_session=_workos_attr(auth_response, "sealed_session", "sealedSession"),
             )
             if isinstance(switched, dict):
                 return switched

@@ -103,11 +103,6 @@ const data = {
           url: "/admin/rag/knowledge-stores",
           icon: Database,
         },
-        {
-          title: "Operators",
-          url: "/admin/rag/operators",
-          icon: Code2,
-        },
       ],
     },
     {

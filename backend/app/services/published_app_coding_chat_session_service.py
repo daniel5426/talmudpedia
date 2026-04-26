@@ -205,7 +205,7 @@ class PublishedAppCodingChatSessionService:
         self,
         *,
         app: PublishedApp,
-        base_revision: PublishedAppRevision,
+        base_revision: PublishedAppRevision | None,
         actor_id: UUID,
         chat_session: PublishedAppCodingChatSession,
         requested_model_id: str | None,
@@ -215,13 +215,20 @@ class PublishedAppCodingChatSessionService:
         selected_agent_contract = await self._selected_agent_contract(app=app)
         runtime_service = PublishedAppDraftDevRuntimeService(self.db)
         try:
-            draft_session = await runtime_service.ensure_active_session(
-                app=app,
-                revision=base_revision,
-                user_id=actor_id,
-                prefer_live_workspace=True,
-                trace_source="coding_agent.chat",
-            )
+            if base_revision is None:
+                draft_session = await runtime_service.ensure_live_workspace_session(
+                    app=app,
+                    user_id=actor_id,
+                    trace_source="coding_agent.chat.live_workspace_without_revision",
+                )
+            else:
+                draft_session = await runtime_service.ensure_active_session(
+                    app=app,
+                    revision=base_revision,
+                    user_id=actor_id,
+                    prefer_live_workspace=True,
+                    trace_source="coding_agent.chat",
+                )
         except PublishedAppDraftDevRuntimeDisabled as exc:
             raise HTTPException(
                 status_code=400,
@@ -273,7 +280,7 @@ class PublishedAppCodingChatSessionService:
         self,
         *,
         app: PublishedApp,
-        base_revision: PublishedAppRevision,
+        base_revision: PublishedAppRevision | None,
         actor_id: UUID,
         chat_session: PublishedAppCodingChatSession,
         message_id: str,

@@ -547,12 +547,14 @@ class PublishedAppCodingRunMonitor:
                 )
                 if claimed_run is None or claimed_app is None:
                     return
-                if not source_revision_id:
-                    return
 
             entry_file = "src/main.tsx"
             async with cls._session_factory() as read_db:
-                source_revision = await read_db.get(PublishedAppRevision, source_revision_id)
+                source_revision = (
+                    await read_db.get(PublishedAppRevision, source_revision_id)
+                    if source_revision_id is not None
+                    else None
+                )
                 if source_revision is not None:
                     entry_file = str(source_revision.entry_file or entry_file)
                 source_fingerprint = cls._revision_source_fingerprint(
@@ -614,8 +616,10 @@ class PublishedAppCodingRunMonitor:
                 )
                 has_workspace_writes = bool(
                     final_workspace_fingerprint
-                    and source_fingerprint
-                    and final_workspace_fingerprint != source_fingerprint
+                    and (
+                        not source_fingerprint
+                        or final_workspace_fingerprint != source_fingerprint
+                    )
                 )
                 work_run.has_workspace_writes = has_workspace_writes
                 apps_builder_trace(

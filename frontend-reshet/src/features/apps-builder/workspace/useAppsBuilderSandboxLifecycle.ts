@@ -109,13 +109,14 @@ function normalizePreviewSessionUrlForReloadCompare(url: string | null | undefin
   if (!url) return "";
   try {
     const parsed = new URL(url);
+    parsed.searchParams.delete("runtime_token");
     const normalizedPath = parsed.pathname.endsWith("/") ? parsed.pathname.slice(0, -1) : parsed.pathname;
     parsed.pathname = normalizedPath || "/";
     parsed.search = parsed.searchParams.toString();
     parsed.hash = "";
     return parsed.toString();
   } catch {
-    return String(url).trim();
+    return String(url).trim().replace(/([?&])runtime_token=[^&]+(&)?/, (_match, prefix, suffix) => (prefix === "?" && suffix ? "?" : suffix ? prefix : ""));
   }
 }
 

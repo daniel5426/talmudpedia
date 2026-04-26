@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.routers import published_apps_builder_preview_proxy as preview_proxy_router
-from app.api.routers.published_apps_preview_auth import create_preview_token
+from app.api.routers.published_apps_preview_auth import PREVIEW_COOKIE_NAME, create_preview_token
 from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.services import published_app_draft_dev_runtime_client as runtime_client_module
 from app.services.published_app_auth_service import PublishedAppAuthRateLimitError
@@ -219,7 +219,6 @@ async def test_builder_preview_proxy_accepts_valid_token_and_forwards_sprite_aut
     assert "runtime_token" not in str(captured["url"])
     assert captured["headers"]["Authorization"] == "Bearer sprite-secret"
     assert captured["headers"]["x-sprite-service"] == "builder-static-preview"
-    assert preview_proxy_router.PREVIEW_COOKIE_NAME in response.headers.get("set-cookie", "")
 
 
 @pytest.mark.asyncio
@@ -246,7 +245,7 @@ async def test_builder_preview_runtime_bootstrap_allows_revisionless_session(mon
 
 
 @pytest.mark.asyncio
-async def test_builder_preview_proxy_prefers_cookie_token_over_stale_query_token(monkeypatch: pytest.MonkeyPatch, client):
+async def test_builder_preview_proxy_ignores_stale_preview_cookie_when_query_token_matches(monkeypatch: pytest.MonkeyPatch, client):
     async def _fake_load_session(*, db, session_id):
         _ = db, session_id
         return _fake_session(
@@ -276,12 +275,12 @@ async def test_builder_preview_proxy_prefers_cookie_token_over_stale_query_token
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
     monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
-    stale_query_token = _preview_token(app_id="other-app")
-    cookie_token = _preview_token()
+    fresh_query_token = _preview_token()
+    stale_cookie_token = _preview_token(app_id="other-app")
 
     response = await client.get(
-        f"/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token={stale_query_token}",
-        cookies={preview_proxy_router.PREVIEW_COOKIE_NAME: cookie_token},
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token={fresh_query_token}",
+        cookies={PREVIEW_COOKIE_NAME: stale_cookie_token},
     )
 
     assert response.status_code == 200
@@ -370,7 +369,7 @@ async def test_builder_preview_thread_detail_uses_runtime_surface(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_builder_preview_proxy_falls_back_to_query_token_when_cookie_is_for_other_app(
+async def test_builder_preview_proxy_requires_query_token_even_when_preview_cookie_is_present(
     monkeypatch: pytest.MonkeyPatch,
     client,
 ):
@@ -403,19 +402,19 @@ async def test_builder_preview_proxy_falls_back_to_query_token_when_cookie_is_fo
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
     monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
-    stale_cookie_token = _preview_token(app_id="other-app")
-    fresh_query_token = _preview_token()
+    stale_cookie_token = _preview_token()
 
     response = await client.get(
-        f"/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token={fresh_query_token}",
-        cookies={preview_proxy_router.PREVIEW_COOKIE_NAME: stale_cookie_token},
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/",
+        cookies={PREVIEW_COOKIE_NAME: stale_cookie_token},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Preview authentication required"
 
 
 @pytest.mark.asyncio
-async def test_builder_preview_proxy_clears_stale_preview_cookie_on_auth_failure(
+async def test_builder_preview_proxy_rejects_wrong_scope_query_token_even_when_preview_cookie_is_present(
     monkeypatch: pytest.MonkeyPatch,
     client,
 ):
@@ -423,23 +422,31 @@ async def test_builder_preview_proxy_clears_stale_preview_cookie_on_auth_failure
         _ = db, session_id
         return _fake_session()
 
-    def _fake_resolve_preview_token_for_session(**kwargs):
-        _ = kwargs
-        raise HTTPException(status_code=401, detail="Preview token has expired")
-
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
-    monkeypatch.setattr(preview_proxy_router, "_resolve_preview_token_for_session", _fake_resolve_preview_token_for_session)
 
     response = await client.get(
-        "/public/apps-builder/draft-dev/sessions/session-1/preview/",
-        cookies={preview_proxy_router.PREVIEW_COOKIE_NAME: "stale-preview-cookie"},
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token={_preview_token(app_id='other-app')}",
+        cookies={PREVIEW_COOKIE_NAME: _preview_token()},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Preview token does not match preview target scope"
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_proxy_rejects_invalid_query_token(monkeypatch: pytest.MonkeyPatch, client):
+    async def _fake_load_session(*, db, session_id):
+        _ = db, session_id
+        return _fake_session()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+
+    response = await client.get(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token=not-a-real-token",
     )
 
     assert response.status_code == 401
-    assert response.json()["detail"] == "Preview token has expired"
-    set_cookie_header = response.headers.get("set-cookie") or ""
-    assert f"{preview_proxy_router.PREVIEW_COOKIE_NAME}=" in set_cookie_header
-    assert "Max-Age=0" in set_cookie_header or "expires=" in set_cookie_header.lower()
+    assert response.json()["detail"] == "Preview token is invalid"
 
 
 @pytest.mark.asyncio
@@ -470,7 +477,13 @@ async def test_builder_preview_proxy_injects_runtime_context_and_static_route_br
             _ = method, url, headers, content
             return _FakeResponse(
                 headers={"content-type": "text/html; charset=utf-8"},
-                content=b"<!doctype html><html><head></head><body><div id='root'></div></body></html>",
+                content=(
+                    b"<!doctype html><html><head>"
+                    b'<script type="module" src="/assets/index-abc123.js"></script>'
+                    b'<script type="module" src="/public/apps-builder/draft-dev/sessions/old-session/preview/assets/stale-session.js"></script>'
+                    b'<link rel="stylesheet" href="./assets/index-def456.css">'
+                    b"</head><body><div id='root'></div></body></html>"
+                ),
             )
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
@@ -486,7 +499,119 @@ async def test_builder_preview_proxy_injects_runtime_context_and_static_route_br
     assert "__APP_RUNTIME_CONTEXT" in response.text
     assert "__talmudpediaPreviewPathShimInstalled" in response.text
     assert "__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH" in response.text
-    assert "runtime_token" not in response.text
+    assert "document.head.prepend(baseEl)" in response.text
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/index-abc123.js" in response.text
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/index-def456.css" in response.text
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/stale-session.js" in response.text
+    assert "/public/apps-builder/draft-dev/sessions/old-session/preview/assets/stale-session.js" not in response.text
+    assert response.text.count("runtime_token=") >= 3
+    assert "next.pathname = nextRoute;" in response.text
+    assert "previewProxyPathPattern" in response.text
+    assert "compact === previewBasePath || compact.startsWith(previewBasePath + '/')" in response.text
+    assert "document.addEventListener('click'" in response.text
+    assert "for (const key of ['runtime_token', '__build', '__reload'])" in response.text
+    assert "Object.defineProperty(proto, 'pathname'" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_proxy_rewrites_js_and_css_asset_references_with_runtime_token(
+    monkeypatch: pytest.MonkeyPatch,
+    client,
+):
+    async def _fake_load_session(*, db, session_id):
+        _ = db, session_id
+        return _fake_session(
+            {
+                "preview": {
+                    "upstream_base_url": "https://sprite-host.example",
+                    "base_path": "/public/apps-builder/draft-dev/sessions/session-1/preview/",
+                    "upstream_path": "/",
+                }
+            }
+        )
+
+    upstream_payloads = {
+        "https://sprite-host.example/assets/index-abc.js": _FakeResponse(
+            headers={"content-type": "application/javascript"},
+            content=(
+                b'const chunk="/assets/chunk-def.js"; '
+                b'const relative="./assets/preload-helper.js"; '
+                b'const dynamic=()=>import("./chunk-Dlc7tRH4.js"); '
+                b'const stale="/public/apps-builder/draft-dev/sessions/old-session/preview/assets/old.js";'
+            ),
+        ),
+        "https://sprite-host.example/assets/index-abc.css": _FakeResponse(
+            headers={"content-type": "text/css"},
+            content=(
+                b".hero{background:url('/assets/bg.png')} "
+                b".icon{background:url(./assets/icon.svg)} "
+                b".font{src:url(./font-a1b2c3d4.woff2)} "
+                b".old{background:url('/public/apps-builder/draft-dev/sessions/old-session/preview/assets/old.svg')}"
+            ),
+        ),
+    }
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, headers=None, content=None):
+            _ = method, headers, content
+            return upstream_payloads[str(url)]
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
+    monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+    preview_token = _preview_token()
+
+    js_response = await client.get(
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/assets/index-abc.js?runtime_token={preview_token}",
+    )
+    css_response = await client.get(
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/assets/index-abc.css?runtime_token={preview_token}",
+    )
+
+    assert js_response.status_code == 200
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/chunk-def.js" in js_response.text
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/preload-helper.js" in js_response.text
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/chunk-Dlc7tRH4.js" in js_response.text
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/old.js" in js_response.text
+    assert "/public/apps-builder/draft-dev/sessions/old-session/preview/assets/old.js" not in js_response.text
+    assert js_response.text.count("runtime_token=") == 4
+    assert css_response.status_code == 200
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/bg.png" in css_response.text
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/icon.svg" in css_response.text
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/font-a1b2c3d4.woff2" in css_response.text
+    assert "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/old.svg" in css_response.text
+    assert "/public/apps-builder/draft-dev/sessions/old-session/preview/assets/old.svg" not in css_response.text
+    assert css_response.text.count("runtime_token=") == 4
+
+
+def test_builder_preview_route_normalization_treats_proxy_paths_as_transport_internals():
+    assert (
+        preview_proxy_router._normalize_preview_route(
+            "/public/apps-builder/draft-dev/sessions/session-1/preview",
+        )
+        == "/"
+    )
+    assert (
+        preview_proxy_router._normalize_preview_route(
+            "/public/apps-builder/draft-dev/sessions/session-1/preview/chat",
+        )
+        == "/chat"
+    )
+    assert (
+        preview_proxy_router._normalize_preview_route(
+            "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/index.js",
+        )
+        == "/"
+    )
 
 
 @pytest.mark.asyncio
@@ -535,6 +660,62 @@ async def test_builder_preview_proxy_passthroughs_static_assets(monkeypatch: pyt
     assert response.status_code == 200
     assert captured["url"] == "https://sprite-host.example/assets/index-abc.js"
     assert response.text == "console.log('ok')"
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_proxy_uses_query_token_session_when_asset_route_has_stale_session_id(
+    monkeypatch: pytest.MonkeyPatch,
+    client,
+):
+    loaded_session_ids: list[str] = []
+
+    async def _fake_load_session(*, db, session_id):
+        _ = db
+        loaded_session_ids.append(str(session_id))
+        assert str(session_id) == "session-1"
+        return _fake_session(
+            {
+                "preview": {
+                    "upstream_base_url": "https://sprite-host.example",
+                    "base_path": "/public/apps-builder/draft-dev/sessions/session-1/preview/",
+                    "upstream_path": "/",
+                }
+            }
+        )
+
+    captured: dict[str, object] = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, headers=None, content=None):
+            captured["url"] = url
+            _ = method, headers, content
+            return _FakeResponse(
+                headers={"content-type": "application/javascript"},
+                content=b"console.log('fresh-session')",
+            )
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
+    monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+    preview_token = _preview_token(session_id="session-1")
+
+    response = await client.get(
+        f"/public/apps-builder/draft-dev/sessions/old-session/preview/assets/index-abc.js?runtime_token={preview_token}",
+    )
+
+    assert response.status_code == 200
+    assert loaded_session_ids == ["session-1"]
+    assert captured["url"] == "https://sprite-host.example/assets/index-abc.js"
+    assert response.text == "console.log('fresh-session')"
 
 
 @pytest.mark.asyncio

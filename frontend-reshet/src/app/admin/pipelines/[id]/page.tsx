@@ -125,17 +125,13 @@ export default function PipelineEditorPage() {
         const fetchData = async () => {
             setLoading(true)
             try {
-                // Always fetch catalog and specs
-                const catalogRes = await ragAdminService.getOperatorCatalog(currentOrganization.id)
-                setCatalog(catalogRes.operators || [])
-                const operatorIds = (catalogRes.operators || []).map((item) => item.type)
-                const specsRes = await ragAdminService.listOperatorSpecs(operatorIds, currentOrganization.id)
-                setOperatorSpecs(specsRes.specs || {})
+                let resolvedPipelineType: "ingestion" | "retrieval" = pipelineType
+                let foundPipeline: any = null
 
                 // If editing existing pipeline, fetch it
                 if (!isNew) {
                     const pipelinesRes = await ragAdminService.listVisualPipelines(currentOrganization.id, { view: "full", limit: 100 })
-                    let foundPipeline = pipelinesRes.items.find(p => p.id === pipelineId)
+                    foundPipeline = pipelinesRes.items.find(p => p.id === pipelineId)
 
                     // If not found, it might be an executable_pipeline_id
                     if (!foundPipeline) {
@@ -150,14 +146,36 @@ export default function PipelineEditorPage() {
                     }
 
                     if (foundPipeline) {
+                        resolvedPipelineType = (foundPipeline as any).pipeline_type || "ingestion"
+                    } else {
+                        // Pipeline not found, redirect to list
+                        router.push("/admin/pipelines")
+                        return
+                    }
+                }
+
+                const catalogRes = await ragAdminService.getOperatorCatalog(
+                    resolvedPipelineType,
+                    currentOrganization.id,
+                )
+                setCatalog(catalogRes.operators || [])
+                const operatorIds = (catalogRes.operators || []).map((item) => item.type)
+                const specsRes = await ragAdminService.listOperatorSpecs(
+                    resolvedPipelineType,
+                    operatorIds,
+                    currentOrganization.id,
+                )
+                setOperatorSpecs(specsRes.specs || {})
+
+                if (foundPipeline) {
                         setPipeline(foundPipeline)
                         setPipelineName(foundPipeline.name)
                         setPipelineDescription(foundPipeline.description || "")
-                        setPipelineType((foundPipeline as any).pipeline_type || "ingestion")
+                        setPipelineType(resolvedPipelineType)
 
                         // Convert pipeline data to editor format
                         const nodes: Node<PipelineNodeData>[] = foundPipeline.nodes.map((n: any) => {
-                            // Use specsRes for reliable input/output type resolution (handles custom operators)
+                            // Use specsRes for reliable input/output type resolution.
                             const spec = specsRes.specs?.[n.operator]
                             return {
                                 id: n.id,
@@ -186,11 +204,6 @@ export default function PipelineEditorPage() {
                         setEditorNodes(nodes)
                         setEditorEdges(edges)
                         await loadToolBinding(foundPipeline.id)
-                    } else {
-                        // Pipeline not found, redirect to list
-                        router.push("/admin/pipelines")
-                        return
-                    }
                 }
             } catch (error) {
                 console.error("Failed to fetch data", error)
@@ -201,7 +214,7 @@ export default function PipelineEditorPage() {
         }
 
         fetchData()
-    }, [currentOrganization, currentOrganization?.id, loadToolBinding, pipelineId, isNew, router])
+    }, [currentOrganization, currentOrganization?.id, loadToolBinding, pipelineId, isNew, pipelineType, router])
 
     // Polling for execution steps
     useEffect(() => {
@@ -680,11 +693,6 @@ export default function PipelineEditorPage() {
                     pipelineType={pipelineType}
                     onChange={handleSaveGraph as any}
                     onSave={handleSave}
-                    onAddCustomOperator={() => {
-                        if (confirm("You are about to leave the pipeline editor. Unsaved changes may be lost.")) {
-                            router.push("/admin/rag/operators?mode=create")
-                        }
-                    }}
                     onCompile={handleCompile}
                     onRun={handleOpenRunDialog}
                     isSaving={saving}

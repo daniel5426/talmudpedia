@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent.execution.service import AgentExecutorService
 from app.api.routers.published_apps_admin_routes_coding_agent_v2 import _build_remote_session_catchup_events
+from app.db.postgres.models.agents import Agent
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppCodingChatSession,
@@ -38,8 +39,10 @@ def test_non_opencode_runs_keep_model_registry_resolution_enabled():
 
 
 async def _create_app_and_draft_revision(db_session, *, organization_id: UUID, user_id: UUID, agent_id: UUID) -> str:
+    agent = await db_session.get(Agent, agent_id)
     app = PublishedApp(
         organization_id=organization_id,
+        project_id=getattr(agent, "project_id", None),
         agent_id=agent_id,
         name=f"Coding Agent V2 App {uuid4().hex[:6]}",
         public_id=f"coding-agent-v2-{uuid4().hex[:10]}",
@@ -68,6 +71,27 @@ async def _create_app_and_draft_revision(db_session, *, organization_id: UUID, u
     db_session.add(revision)
     await db_session.flush()
     app.current_draft_revision_id = revision.id
+    await db_session.commit()
+    return str(app.id)
+
+
+async def _create_app_without_draft_revision(db_session, *, organization_id: UUID, user_id: UUID, agent_id: UUID) -> str:
+    agent = await db_session.get(Agent, agent_id)
+    app = PublishedApp(
+        organization_id=organization_id,
+        project_id=getattr(agent, "project_id", None),
+        agent_id=agent_id,
+        name=f"Coding Agent V2 Fresh App {uuid4().hex[:6]}",
+        public_id=f"coding-agent-v2-fresh-{uuid4().hex[:10]}",
+        status=PublishedAppStatus.draft,
+        visibility=PublishedAppVisibility.public,
+        auth_enabled=True,
+        auth_providers=["password"],
+        auth_template_key="auth-classic",
+        template_key="classic-chat",
+        created_by=user_id,
+    )
+    db_session.add(app)
     await db_session.commit()
     return str(app.id)
 
@@ -198,6 +222,45 @@ async def test_v2_chat_session_submit_message_and_list_history(client, db_sessio
     history = history_response.json()
     assert [item["role"] for item in history["messages"]] == ["user", "assistant"]
     assert history["paging"]["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_v2_chat_session_submit_message_allows_fresh_live_workspace_without_revision(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id = await _create_app_without_draft_revision(
+        db_session,
+        organization_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    session = await _create_chat_session(db_session, app_id=UUID(app_id), user_id=user.id)
+    captured: dict[str, object] = {}
+
+    async def _fake_submit_message(self, **kwargs):
+        _ = self
+        captured["base_revision"] = kwargs["base_revision"]
+        return {
+            "submission_status": "accepted",
+            "chat_session_id": str(session.id),
+            "message": {
+                "id": "msg-1",
+                "role": "user",
+                "content": "Hello there",
+                "parts": [{"id": "msg-1-part-1", "type": "text", "text": "Hello there"}],
+                "created_at": "2026-04-17T00:00:00Z",
+            },
+        }
+
+    monkeypatch.setattr(PublishedAppCodingChatSessionService, "submit_message", _fake_submit_message)
+
+    submit_response = await client.post(
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{session.id}/messages",
+        headers=headers,
+        json={"message_id": "msg-1", "parts": [{"type": "text", "text": "Hello there"}]},
+    )
+    assert submit_response.status_code == 200
+    assert captured["base_revision"] is None
 
 
 @pytest.mark.asyncio

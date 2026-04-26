@@ -67,12 +67,9 @@ from .published_apps_public import (
     _upload_published_app_attachments,
 )
 from .published_apps_preview_auth import (
-    PREVIEW_COOKIE_NAME,
     PREVIEW_TARGET_DRAFT_DEV_SESSION,
-    clear_preview_cookie,
+    append_preview_runtime_token,
     decode_preview_token,
-    resolve_preview_token,
-    set_preview_cookie as _set_canonical_preview_cookie,
     token_matches_target,
 )
 
@@ -83,11 +80,24 @@ _PREVIEW_WEBSOCKET_OPEN_TIMEOUT_SECONDS = 20.0
 _PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS = 3
 _PREVIEW_HTTP_RETRY_DELAYS_SECONDS = (0.0, 0.35, 0.75, 1.5)
 _HTML_URL_ATTR_PATTERN = re.compile(r"""(?P<prefix>\b(?:src|href)=["'])(?P<path>/[^"'?#]+(?:[?#][^"']*)?)""")
+_HTML_RELATIVE_ASSET_URL_ATTR_PATTERN = re.compile(
+    r"""(?P<prefix>\b(?:src|href)=["'])(?P<path>(?:\./)?assets/[^"'?#]+(?:[?#][^"']*)?)"""
+)
+_BUILDER_PREVIEW_PROXY_PATH_PATTERN = re.compile(
+    r"^/public/apps-builder/draft-dev/sessions/[^/]+/preview(?P<resource>/.*)?$"
+)
 _INLINE_VITE_PATH_PATTERN = re.compile(
-    r"""(?P<quote>["'])(?P<path>/(?:@vite|@react-refresh|src/|node_modules/|runtime-sdk/|__vite)[^"']*)(?P=quote)"""
+    r"""(?P<quote>["'])(?P<path>/(?:public/apps-builder/draft-dev/sessions/[^/]+/preview/|@vite|@react-refresh|src/|node_modules/|runtime-sdk/|__vite)[^"']*)(?P=quote)"""
+)
+_ROOT_ASSET_PATH_PATTERN = re.compile(
+    r"""(?P<quote>["'])(?P<path>/(?:public/apps-builder/draft-dev/sessions/[^/]+/preview/)?assets/[^"'?#]+(?:[?#][^"']*)?)(?P=quote)"""
+)
+_RELATIVE_ASSET_PATH_PATTERN = re.compile(r"""(?P<quote>["'])(?P<path>(?:\./)?assets/[^"'?#]+(?:[?#][^"']*)?)(?P=quote)""")
+_RELATIVE_BUNDLED_ASSET_PATH_PATTERN = re.compile(
+    r"""(?P<quote>["'])(?P<path>\./[^/"'?#]+-[A-Za-z0-9_-]{6,}\.(?:js|css|mjs|json|wasm|svg|png|jpg|jpeg|webp|woff2?)(?:[?#][^"']*)?)(?P=quote)"""
 )
 _CSS_URL_PATH_PATTERN = re.compile(
-    r"""url\((?P<quote>["']?)(?P<path>/(?:@vite|@react-refresh|src/|node_modules/|runtime-sdk/|__vite)[^)"']*)(?P=quote)\)"""
+    r"""url\((?P<quote>["']?)(?P<path>/(?:public/apps-builder/draft-dev/sessions/[^/]+/preview/|@vite|@react-refresh|src/|node_modules/|runtime-sdk/|__vite|assets/)[^)"']*|(?:\./)?assets/[^)"']*|\./[^/"'?#)]+-[A-Za-z0-9_-]{6,}\.(?:js|css|mjs|json|wasm|svg|png|jpg|jpeg|webp|woff2?)(?:[?#][^)"']*)?)(?P=quote)\)"""
 )
 _HMR_OWNER_PATH_PATTERN = re.compile(
     r'(?P<prefix>__vite__createHotContext\()'
@@ -122,6 +132,14 @@ def _normalize_preview_route(value: str | None) -> str:
     normalized = re.sub(r"/{2,}", "/", normalized)
     if normalized != "/" and normalized.endswith("/"):
         normalized = normalized[:-1]
+    proxy_match = _BUILDER_PREVIEW_PROXY_PATH_PATTERN.match(normalized)
+    if proxy_match:
+        resource = str(proxy_match.group("resource") or "").strip()
+        if not resource or resource == "/":
+            return "/"
+        if resource.startswith("/assets/") or resource.startswith(INTERNAL_PREFIX):
+            return "/"
+        return _normalize_preview_route(resource)
     return normalized or "/"
 
 
@@ -131,39 +149,85 @@ def _build_preview_path_shim(*, target: dict[str, str], preview_route: str) -> s
         base_path = f"/{base_path}"
     normalized_base_path = base_path[:-1] if base_path.endswith("/") and base_path != "/" else base_path
     base_path_literal = json.dumps(normalized_base_path)
+    base_href_literal = json.dumps(f"{normalized_base_path.rstrip('/')}/")
     preview_route_literal = json.dumps(_normalize_preview_route(preview_route))
     return (
         "<script>\n"
         "(function(){\n"
         "  if (window.__talmudpediaPreviewPathShimInstalled) return;\n"
         "  window.__talmudpediaPreviewPathShimInstalled = true;\n"
+        "  const bridgeType = 'talmudpedia.preview-debug.v1';\n"
         f"  const previewBasePath = {base_path_literal};\n"
+        f"  const previewBaseHref = {base_href_literal};\n"
         f"  const initialPreviewRoute = {preview_route_literal};\n"
         "  window.__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH = previewBasePath;\n"
+        "  const previewProxyPathPattern = /^\\/public\\/apps-builder\\/draft-dev\\/sessions\\/[^/]+\\/preview(?:\\/(.*))?$/;\n"
         "  const normalizeAppPath = (pathname) => {\n"
         "    const raw = String(pathname || '').trim();\n"
         "    if (!raw) return '/';\n"
         "    const normalized = raw.startsWith('/') ? raw : '/' + raw;\n"
-        "    if (normalized !== '/' && normalized.endsWith('/')) return normalized.slice(0, -1) || '/';\n"
-        "    return normalized || '/';\n"
+        "    const compact = normalized.replace(/\\/{2,}/g, '/');\n"
+        "    const proxyMatch = compact.match(previewProxyPathPattern);\n"
+        "    if (proxyMatch) {\n"
+        "      const resource = String(proxyMatch[1] || '').trim();\n"
+        "      if (!resource || resource === '/' || resource.startsWith('assets/') || resource.startsWith('_talmudpedia/')) return '/';\n"
+        "      return normalizeAppPath('/' + resource);\n"
+        "    }\n"
+        "    if (compact !== '/' && compact.endsWith('/')) return compact.slice(0, -1) || '/';\n"
+        "    return compact || '/';\n"
+        "  };\n"
+        "  const isPreviewProxyPath = (pathname) => {\n"
+        "    const raw = String(pathname || '').trim();\n"
+        "    const normalized = raw.startsWith('/') ? raw : '/' + raw;\n"
+        "    const compact = normalized.replace(/\\/{2,}/g, '/');\n"
+        "    return compact === previewBasePath || compact.startsWith(previewBasePath + '/');\n"
         "  };\n"
         "  const currentPreviewRoute = () => {\n"
         "    try {\n"
         "      const current = new URL(window.location.href);\n"
         "      const queryRoute = current.searchParams.get('preview_route');\n"
-        "      return normalizeAppPath(queryRoute || initialPreviewRoute || '/');\n"
+        "      if (queryRoute) return normalizeAppPath(queryRoute);\n"
+        "      if (isPreviewProxyPath(current.pathname)) return normalizeAppPath(initialPreviewRoute || '/');\n"
+        "      return normalizeAppPath(current.pathname || '/');\n"
         "    } catch {\n"
         "      return normalizeAppPath(initialPreviewRoute || '/');\n"
         "    }\n"
         "  };\n"
-        "  const toProxyUrl = (value) => {\n"
+        "  const postRouteChange = (source) => {\n"
+        "    try {\n"
+        "      const route = currentPreviewRoute();\n"
+        "      if (typeof window !== 'undefined' && window.parent && window.parent !== window) {\n"
+        "        window.parent.postMessage({ type: bridgeType, payload: { event: 'preview.route_changed', route, source: String(source || '') } }, '*');\n"
+        "      }\n"
+        "    } catch {}\n"
+        "  };\n"
+        "  const originalPushState = typeof window.history.pushState === 'function' ? window.history.pushState.bind(window.history) : null;\n"
+        "  const originalReplaceState = typeof window.history.replaceState === 'function' ? window.history.replaceState.bind(window.history) : null;\n"
+        "  const ensureBaseElement = () => {\n"
+        "    if (!document || !document.head) return;\n"
+        "    let baseEl = document.querySelector('base[data-talmudpedia-preview-base=\"true\"]');\n"
+        "    if (!baseEl) {\n"
+        "      baseEl = document.createElement('base');\n"
+        "      baseEl.setAttribute('data-talmudpedia-preview-base', 'true');\n"
+        "      document.head.prepend(baseEl);\n"
+        "    }\n"
+        "    baseEl.setAttribute('href', previewBaseHref);\n"
+        "  };\n"
+        "  const toAppUrl = (value) => {\n"
         "    if (value == null || value === '') return value;\n"
         "    try {\n"
         "      const current = new URL(window.location.href);\n"
         "      const next = new URL(String(value), current);\n"
         "      if (next.origin !== current.origin) return value;\n"
-        "      const nextRoute = normalizeAppPath(next.pathname || '/');\n"
-        "      next.pathname = previewBasePath;\n"
+        "      const nextRoute = isPreviewProxyPath(next.pathname)\n"
+        "        ? normalizeAppPath(next.searchParams.get('preview_route') || initialPreviewRoute || '/')\n"
+        "        : normalizeAppPath(next.pathname || '/');\n"
+        "      next.pathname = nextRoute;\n"
+        "      for (const key of ['runtime_token', '__build', '__reload']) {\n"
+        "        if (!next.searchParams.has(key) && current.searchParams.has(key)) {\n"
+        "          next.searchParams.set(key, current.searchParams.get(key) || '');\n"
+        "        }\n"
+        "      }\n"
         "      next.searchParams.set('preview_route', nextRoute);\n"
         "      return next.pathname + next.search + next.hash;\n"
         "    } catch {\n"
@@ -171,37 +235,53 @@ def _build_preview_path_shim(*, target: dict[str, str], preview_route: str) -> s
         "    }\n"
         "  };\n"
         "  try {\n"
-        "    const proto = Object.getPrototypeOf(window.location);\n"
-        "    const descriptor = Object.getOwnPropertyDescriptor(proto, 'pathname');\n"
-        "    if (descriptor && descriptor.configurable && typeof descriptor.get === 'function') {\n"
-        "      Object.defineProperty(proto, 'pathname', {\n"
-        "        configurable: true,\n"
-        "        enumerable: descriptor.enumerable,\n"
-        "        get: function() {\n"
-        "          return currentPreviewRoute();\n"
-        "        },\n"
-        "        set: typeof descriptor.set === 'function'\n"
-        "          ? function(value) {\n"
-        "              return descriptor.set.call(window.location, toProxyUrl(value));\n"
-        "            }\n"
-        "          : undefined,\n"
-        "      });\n"
+        "    ensureBaseElement();\n"
+        "  } catch {}\n"
+        "  try {\n"
+        "    const current = new URL(window.location.href);\n"
+        "    if (isPreviewProxyPath(current.pathname) && originalReplaceState) {\n"
+        "      const nextUrl = toAppUrl(current.href);\n"
+        "      if (typeof nextUrl === 'string' && nextUrl && nextUrl !== current.pathname + current.search + current.hash) {\n"
+        "        originalReplaceState(window.history.state, '', nextUrl);\n"
+        "      }\n"
+        "    } else if (originalReplaceState) {\n"
+        "      const nextRoute = normalizeAppPath(current.pathname || '/');\n"
+        "      if (normalizeAppPath(current.searchParams.get('preview_route')) !== nextRoute) {\n"
+        "        current.searchParams.set('preview_route', nextRoute);\n"
+        "        originalReplaceState(window.history.state, '', current.pathname + current.search + current.hash);\n"
+        "      }\n"
         "    }\n"
+        "    postRouteChange('shim_init');\n"
         "  } catch {}\n"
         "  try {\n"
         "    const assign = window.location.assign.bind(window.location);\n"
         "    const replace = window.location.replace.bind(window.location);\n"
-        "    window.location.assign = function(value) { assign(toProxyUrl(value)); };\n"
-        "    window.location.replace = function(value) { replace(toProxyUrl(value)); };\n"
+        "    window.location.assign = function(value) { assign(toAppUrl(value)); };\n"
+        "    window.location.replace = function(value) { replace(toAppUrl(value)); };\n"
         "  } catch {}\n"
         "  for (const methodName of ['pushState', 'replaceState']) {\n"
         "    const original = window.history[methodName];\n"
         "    if (typeof original !== 'function') continue;\n"
         "    window.history[methodName] = function(state, unused, url) {\n"
-        "      const nextUrl = typeof url === 'string' || url instanceof URL ? toProxyUrl(url) : url;\n"
-        "      return original.call(this, state, unused, nextUrl);\n"
+        "      const nextUrl = typeof url === 'string' || url instanceof URL ? toAppUrl(url) : url;\n"
+        "      const result = original.call(this, state, unused, nextUrl);\n"
+        "      postRouteChange(methodName);\n"
+        "      return result;\n"
         "    };\n"
         "  }\n"
+        "  document.addEventListener('click', function(event) {\n"
+        "    const anchor = event.target && typeof event.target.closest === 'function' ? event.target.closest('a[href]') : null;\n"
+        "    if (!anchor || event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;\n"
+        "    const target = String(anchor.getAttribute('target') || '').trim();\n"
+        "    if (target && target !== '_self') return;\n"
+        "    const href = anchor.getAttribute('href');\n"
+        "    if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;\n"
+        "    const nextUrl = toAppUrl(href);\n"
+        "    if (typeof nextUrl !== 'string' || !nextUrl || nextUrl === href) return;\n"
+        "    event.preventDefault();\n"
+        "    window.history.pushState({}, '', nextUrl);\n"
+        "  }, true);\n"
+        "  window.addEventListener('popstate', function() { postRouteChange('popstate'); });\n"
         "})();\n"
         "</script>\n"
     )
@@ -401,66 +481,80 @@ def _should_retry_preview_request(*, method: str, status_code: int | None = None
     return int(status_code or 0) in {404, 408, 425, 429, 500, 502, 503, 504}
 
 
-def _extract_preview_token(*, request: Request | None = None, websocket: WebSocket | None = None) -> str | None:
-    query_params = request.query_params if request is not None else websocket.query_params
-    cookies = request.cookies if request is not None else websocket.cookies
-    cookie_token = str(cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
-    if cookie_token:
-        return cookie_token
-    query_token = str(query_params.get("runtime_token") or "").strip()
-    if query_token:
-        return query_token
-    return None
-
-
-def _resolve_preview_token_for_session(
+def _resolve_builder_preview_query_token_for_session(
     *,
     session: PublishedAppDraftDevSession,
     request: Request | None = None,
     websocket: WebSocket | None = None,
 ) -> tuple[str, dict[str, Any], str]:
-    if request is not None:
-        return resolve_preview_token(
-            request=request,
-            matcher=lambda payload: token_matches_target(
-                payload,
-                app_id=str(session.published_app_id),
-                preview_target_type=PREVIEW_TARGET_DRAFT_DEV_SESSION,
-                preview_target_id=str(session.id),
-                revision_id=str(session.revision_id) if session.revision_id else None,
-            ),
+    query_params = request.query_params if request is not None else websocket.query_params
+    token = str(query_params.get("runtime_token") or "").strip()
+    expected_revision_id = str(session.revision_id) if session.revision_id else None
+    trace_fields = {
+        "domain": "preview.proxy",
+        "session_id": str(session.id),
+        "app_id": str(session.published_app_id),
+        "revision_id": expected_revision_id,
+        "sandbox_id": str(getattr(session, "sandbox_id", "") or "") or None,
+        "token_source": "query",
+        "query_token_present": bool(token),
+        "expected_preview_target_type": PREVIEW_TARGET_DRAFT_DEV_SESSION,
+        "expected_preview_target_id": str(session.id),
+        "expected_revision_id": expected_revision_id,
+        "channel": "http" if request is not None else "websocket",
+    }
+    if not token:
+        apps_builder_trace(
+            "preview.auth.failed",
+            query_token_decoded=False,
+            query_token_scope_matched=False,
+            error_detail="Preview authentication required",
+            error_status_code=401,
+            **trace_fields,
         )
-    query_params = websocket.query_params
-    cookies = websocket.cookies
-    first_auth_error: HTTPException | None = None
-    scope_mismatch_seen = False
-    for source, token in (
-        ("cookie", str(cookies.get(PREVIEW_COOKIE_NAME) or "").strip()),
-        ("query", str(query_params.get("runtime_token") or "").strip()),
-    ):
-        if not token:
-            continue
-        try:
-            payload = decode_preview_token(token)
-        except HTTPException as exc:
-            if first_auth_error is None:
-                first_auth_error = exc
-            continue
-        if not token_matches_target(
-            payload,
-            app_id=str(session.published_app_id),
-            preview_target_type=PREVIEW_TARGET_DRAFT_DEV_SESSION,
-            preview_target_id=str(session.id),
-            revision_id=str(session.revision_id) if session.revision_id else None,
-        ):
-            scope_mismatch_seen = True
-            continue
-        return token, payload, source
-    if first_auth_error is not None:
-        raise first_auth_error
-    if scope_mismatch_seen:
+        raise HTTPException(status_code=401, detail="Preview authentication required")
+    try:
+        payload = decode_preview_token(token)
+    except HTTPException as exc:
+        apps_builder_trace(
+            "preview.auth.failed",
+            query_token_decoded=False,
+            query_token_scope_matched=False,
+            error_detail=str(exc.detail),
+            error_status_code=exc.status_code,
+            **trace_fields,
+        )
+        raise
+    scope_matched = token_matches_target(
+        payload,
+        app_id=str(session.published_app_id),
+        preview_target_type=PREVIEW_TARGET_DRAFT_DEV_SESSION,
+        preview_target_id=str(session.id),
+        revision_id=expected_revision_id,
+    )
+    if not scope_matched:
+        apps_builder_trace(
+            "preview.auth.failed",
+            query_token_decoded=True,
+            query_token_scope_matched=False,
+            token_preview_target_type=str(payload.get("preview_target_type") or "").strip() or None,
+            token_preview_target_id=str(payload.get("preview_target_id") or "").strip() or None,
+            token_revision_id=str(payload.get("revision_id") or "").strip() or None,
+            error_detail="Preview token does not match preview target scope",
+            error_status_code=403,
+            **trace_fields,
+        )
         raise HTTPException(status_code=403, detail="Preview token does not match preview target scope")
-    raise HTTPException(status_code=401, detail="Preview authentication required")
+    apps_builder_trace(
+        "preview.auth.resolved",
+        query_token_decoded=True,
+        query_token_scope_matched=True,
+        token_preview_target_type=str(payload.get("preview_target_type") or "").strip() or None,
+        token_preview_target_id=str(payload.get("preview_target_id") or "").strip() or None,
+        token_revision_id=str(payload.get("revision_id") or "").strip() or None,
+        **trace_fields,
+    )
+    return token, payload, "query"
 
 
 async def _load_session(*, db: AsyncSession, session_id: str) -> PublishedAppDraftDevSession:
@@ -477,6 +571,68 @@ async def _load_session(*, db: AsyncSession, session_id: str) -> PublishedAppDra
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=404, detail="Draft dev session not found")
+    return session
+
+
+async def _load_builder_preview_session_from_query_token(
+    *,
+    db: AsyncSession,
+    requested_session_id: str,
+    request: Request | None = None,
+    websocket: WebSocket | None = None,
+) -> PublishedAppDraftDevSession:
+    query_params = request.query_params if request is not None else websocket.query_params
+    token = str(query_params.get("runtime_token") or "").strip()
+    channel = "http" if request is not None else "websocket"
+    if not token:
+        apps_builder_trace(
+            "preview.auth.failed",
+            domain="preview.proxy",
+            requested_session_id=str(requested_session_id),
+            session_id=str(requested_session_id),
+            token_source="query",
+            query_token_present=False,
+            query_token_decoded=False,
+            query_token_scope_matched=False,
+            expected_preview_target_type=PREVIEW_TARGET_DRAFT_DEV_SESSION,
+            expected_preview_target_id=str(requested_session_id),
+            error_detail="Preview authentication required",
+            error_status_code=401,
+            channel=channel,
+        )
+        raise HTTPException(status_code=401, detail="Preview authentication required")
+    payload = decode_preview_token(token)
+    token_target_type = str(payload.get("preview_target_type") or "").strip()
+    token_target_id = str(payload.get("preview_target_id") or "").strip()
+    if token_target_type != PREVIEW_TARGET_DRAFT_DEV_SESSION or not token_target_id:
+        apps_builder_trace(
+            "preview.auth.failed",
+            domain="preview.proxy",
+            requested_session_id=str(requested_session_id),
+            session_id=str(requested_session_id),
+            token_source="query",
+            query_token_present=True,
+            query_token_decoded=True,
+            query_token_scope_matched=False,
+            token_preview_target_type=token_target_type or None,
+            token_preview_target_id=token_target_id or None,
+            error_detail="Preview token does not match preview target scope",
+            error_status_code=403,
+            channel=channel,
+        )
+        raise HTTPException(status_code=403, detail="Preview token does not match preview target scope")
+    session = await _load_session(db=db, session_id=token_target_id)
+    if str(session.id) != str(requested_session_id):
+        apps_builder_trace(
+            "preview.proxy.stale_route_session_rebound",
+            domain="preview.proxy",
+            requested_session_id=str(requested_session_id),
+            session_id=str(session.id),
+            app_id=str(session.published_app_id),
+            revision_id=str(session.revision_id or ""),
+            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+            channel=channel,
+        )
     return session
 
 
@@ -837,25 +993,126 @@ def _compose_proxy_path(*, target: dict[str, str], resource_path: str) -> str:
         base_path = f"/{base_path}"
     return f"{base_path.rstrip('/')}/{str(resource_path or '').lstrip('/')}"
 
+
+def _normalize_proxy_resource_path(resource_path: str) -> str:
+    original = str(resource_path or "").strip()
+    if original.startswith("./"):
+        original = original[2:]
+    proxy_match = _BUILDER_PREVIEW_PROXY_PATH_PATTERN.match(original)
+    if proxy_match:
+        return str(proxy_match.group("resource") or "").lstrip("/")
+    return original
+
+
+def _compose_authenticated_proxy_path(
+    *,
+    target: dict[str, str],
+    resource_path: str,
+    runtime_token: str | None,
+) -> str:
+    rewritten = _compose_proxy_path(target=target, resource_path=_normalize_proxy_resource_path(resource_path))
+    return append_preview_runtime_token(rewritten, runtime_token)
+
+
+def _resolve_relative_preview_resource_path(*, current_path: str, resource_path: str) -> str:
+    original = str(resource_path or "").strip()
+    if not original.startswith("./"):
+        return original
+    relative = original[2:]
+    if relative.startswith("assets/"):
+        return relative
+    normalized_current = str(current_path or "").strip().lstrip("/")
+    current_dir = normalized_current.rsplit("/", 1)[0] if "/" in normalized_current else ""
+    return f"{current_dir}/{relative}" if current_dir else relative
+
+
+def _rewrite_html_resource_paths(*, target: dict[str, str], text: str, runtime_token: str | None) -> str:
+    def _replace_absolute_attr(match: re.Match[str]) -> str:
+        original = str(match.group("path") or "")
+        if original.startswith("//"):
+            return match.group(0)
+        if not (
+            original.startswith("/assets/")
+            or original.startswith("/public/apps-builder/draft-dev/sessions/")
+            or original.startswith("/@vite")
+            or original.startswith("/@react-refresh")
+            or original.startswith("/src/")
+            or original.startswith("/node_modules/")
+            or original.startswith("/runtime-sdk/")
+            or original.startswith("/__vite")
+        ):
+            return match.group(0)
+        rewritten = _compose_authenticated_proxy_path(
+            target=target,
+            resource_path=original,
+            runtime_token=runtime_token,
+        )
+        return f"{match.group('prefix')}{rewritten}"
+
+    def _replace_relative_asset_attr(match: re.Match[str]) -> str:
+        original = str(match.group("path") or "")
+        rewritten = _compose_authenticated_proxy_path(
+            target=target,
+            resource_path=original[2:] if original.startswith("./") else original,
+            runtime_token=runtime_token,
+        )
+        return f"{match.group('prefix')}{rewritten}"
+
+    rewritten = _HTML_URL_ATTR_PATTERN.sub(_replace_absolute_attr, text)
+    return _HTML_RELATIVE_ASSET_URL_ATTR_PATTERN.sub(_replace_relative_asset_attr, rewritten)
+
+
 def _rewrite_inline_vite_paths(*, target: dict[str, str], text: str, runtime_token: str | None) -> str:
     def _replace_inline(match: re.Match[str]) -> str:
         quote = str(match.group("quote") or '"')
         original = str(match.group("path") or "")
         if original.startswith("//"):
             return match.group(0)
-        rewritten = _compose_proxy_path(target=target, resource_path=original)
+        rewritten = _compose_authenticated_proxy_path(target=target, resource_path=original, runtime_token=runtime_token)
         return f"{quote}{rewritten}{quote}"
 
     return _INLINE_VITE_PATH_PATTERN.sub(_replace_inline, text)
 
 
-def _rewrite_css_url_paths(*, target: dict[str, str], text: str, runtime_token: str | None) -> str:
+def _rewrite_asset_literal_paths(
+    *,
+    target: dict[str, str],
+    path: str,
+    text: str,
+    runtime_token: str | None,
+) -> str:
+    def _replace_path(match: re.Match[str]) -> str:
+        quote = str(match.group("quote") or '"')
+        original = str(match.group("path") or "")
+        rewritten = _compose_authenticated_proxy_path(
+            target=target,
+            resource_path=_resolve_relative_preview_resource_path(current_path=path, resource_path=original),
+            runtime_token=runtime_token,
+        )
+        return f"{quote}{rewritten}{quote}"
+
+    rewritten = _ROOT_ASSET_PATH_PATTERN.sub(_replace_path, text)
+    rewritten = _RELATIVE_ASSET_PATH_PATTERN.sub(_replace_path, rewritten)
+    return _RELATIVE_BUNDLED_ASSET_PATH_PATTERN.sub(_replace_path, rewritten)
+
+
+def _rewrite_css_url_paths(
+    *,
+    target: dict[str, str],
+    path: str,
+    text: str,
+    runtime_token: str | None,
+) -> str:
     def _replace_css_url(match: re.Match[str]) -> str:
         quote = str(match.group("quote") or "")
         original = str(match.group("path") or "")
         if original.startswith("//"):
             return match.group(0)
-        rewritten = _compose_proxy_path(target=target, resource_path=original)
+        rewritten = _compose_authenticated_proxy_path(
+            target=target,
+            resource_path=_resolve_relative_preview_resource_path(current_path=path, resource_path=original),
+            runtime_token=runtime_token,
+        )
         return f"url({quote}{rewritten}{quote})"
 
     return _CSS_URL_PATH_PATTERN.sub(_replace_css_url, text)
@@ -1030,6 +1287,7 @@ def _rewrite_html_preview_content(
     except UnicodeDecodeError:
         return content
     rewritten = text
+    rewritten = _rewrite_html_resource_paths(target=target, text=rewritten, runtime_token=runtime_token)
     if runtime_context is not None:
         rewritten = _inject_runtime_context_into_html(rewritten, runtime_context)
     rewritten = _inject_preview_path_shim(html=rewritten, target=target, preview_route=preview_route)
@@ -1047,15 +1305,41 @@ def _rewrite_text_preview_content(
     preview_route: str,
 ) -> tuple[bytes, bool]:
     normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
-    if normalized_content_type != "text/html":
+    if not normalized_content_type.startswith(_REWRITABLE_TEXT_PREFIXES):
         return content, False
-    rewritten = _rewrite_html_preview_content(
-        target=target,
-        content=content,
-        runtime_token=runtime_token,
-        runtime_context=runtime_context,
-        preview_route=preview_route,
-    )
+    if normalized_content_type == "text/html":
+        rewritten = _rewrite_html_preview_content(
+            target=target,
+            content=content,
+            runtime_token=runtime_token,
+            runtime_context=runtime_context,
+            preview_route=preview_route,
+        )
+    else:
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return content, False
+        rewritten_text = _rewrite_inline_vite_paths(target=target, text=text, runtime_token=runtime_token)
+        rewritten_text = _rewrite_asset_literal_paths(
+            target=target,
+            path=path,
+            text=rewritten_text,
+            runtime_token=runtime_token,
+        )
+        rewritten_text = _rewrite_css_url_paths(
+            target=target,
+            path=path,
+            text=rewritten_text,
+            runtime_token=runtime_token,
+        )
+        if normalized_content_type in {"application/javascript", "text/javascript"} and "@vite/client" in rewritten_text:
+            rewritten_text = _rewrite_vite_client_hmr_runtime(
+                target=target,
+                text=rewritten_text,
+                runtime_token=runtime_token,
+            )
+        rewritten = rewritten_text.encode("utf-8")
     return rewritten, rewritten != content
 
 
@@ -1118,22 +1402,18 @@ def _websocket_proxy_connect_options(
     return additional_headers, subprotocols
 
 
-def _set_preview_cookie(response: Response, *, request: Request, token: str) -> None:
-    _set_canonical_preview_cookie(response=response, request=request, token=token)
-
-
 async def _load_preview_request_context(
     *,
     db: AsyncSession,
     request: Request,
     session_id: str,
 ) -> tuple[PublishedAppDraftDevSession, PublishedApp, PublishedAppRevision | None, dict[str, Any], str]:
-    session = await _load_session(db=db, session_id=session_id)
-    token = _extract_preview_token(request=request)
-    if not token:
-        raise HTTPException(status_code=401, detail="Preview authentication required")
-    payload = decode_preview_token(token)
-    _assert_preview_scope_matches_session(payload, session)
+    session = await _load_builder_preview_session_from_query_token(
+        db=db,
+        requested_session_id=session_id,
+        request=request,
+    )
+    token, payload, _ = _resolve_builder_preview_query_token_for_session(session=session, request=request)
     app, revision = await _load_preview_app_and_revision(db=db, session=session)
     return session, app, revision, payload, token
 
@@ -1190,10 +1470,7 @@ async def builder_preview_status(
         error=str(live_preview.get("error") or "").strip() or None,
         token_present=bool(token),
     )
-    response = JSONResponse(live_preview)
-    if token:
-        _set_preview_cookie(response, request=request, token=token)
-    return response
+    return JSONResponse(live_preview)
 
 
 @router.get("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/auth/state")
@@ -1608,17 +1885,13 @@ async def proxy_builder_preview(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     proxy_started_at = time.perf_counter()
-    session = await _load_session(db=db, session_id=session_id)
-    query_token = str(request.query_params.get("runtime_token") or "").strip()
-    cookie_token = str(request.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
-    try:
-        token, payload, token_source = _resolve_preview_token_for_session(session=session, request=request)
-    except HTTPException as exc:
-        if cookie_token and exc.status_code in {401, 403}:
-            response = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-            clear_preview_cookie(response=response)
-            return response
-        raise
+    requested_session_id = str(session_id)
+    session = await _load_builder_preview_session_from_query_token(
+        db=db,
+        requested_session_id=requested_session_id,
+        request=request,
+    )
+    token, payload, token_source = _resolve_builder_preview_query_token_for_session(session=session, request=request)
     await _touch_preview_session_activity(
         db=db,
         session=session,
@@ -1642,6 +1915,7 @@ async def proxy_builder_preview(
     apps_builder_trace(
         "preview.proxy.requested",
         domain="preview.proxy",
+        requested_session_id=requested_session_id,
         session_id=str(session.id),
         app_id=str(session.published_app_id),
         revision_id=str(session.revision_id or ""),
@@ -1668,6 +1942,7 @@ async def proxy_builder_preview(
     apps_builder_trace(
         "preview.proxy.target_resolved",
         domain="preview.proxy",
+        requested_session_id=requested_session_id,
         session_id=str(session.id),
         app_id=str(session.published_app_id),
         revision_id=str(session.revision_id or ""),
@@ -1816,8 +2091,6 @@ async def proxy_builder_preview(
         response.headers[key] = value
     if content_rewritten:
         response.headers["Cache-Control"] = "no-store"
-    if token:
-        _set_preview_cookie(response, request=request, token=token)
     apps_builder_trace(
         "preview.proxy.completed",
         domain="preview.proxy",
@@ -1848,10 +2121,28 @@ async def proxy_builder_preview_websocket(
     db: AsyncSession = Depends(get_db),
     path: str = "",
 ) -> None:
-    session = await _load_session(db=db, session_id=session_id)
+    try:
+        session = await _load_builder_preview_session_from_query_token(
+            db=db,
+            requested_session_id=session_id,
+            websocket=websocket,
+        )
+        _resolve_builder_preview_query_token_for_session(session=session, websocket=websocket)
+    except HTTPException as exc:
+        apps_builder_trace(
+            "preview.proxy.websocket_auth_rejected",
+            domain="preview.proxy",
+            requested_session_id=str(session_id),
+            path=path,
+            error_status_code=exc.status_code,
+            error_detail=str(exc.detail),
+        )
+        await websocket.close(code=4401 if exc.status_code == 401 else 4403)
+        return
     apps_builder_trace(
         "preview.proxy.websocket_rejected",
         domain="preview.proxy",
+        requested_session_id=str(session_id),
         session_id=str(session.id),
         app_id=str(session.published_app_id),
         revision_id=str(session.revision_id or ""),

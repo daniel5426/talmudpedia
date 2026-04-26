@@ -110,6 +110,35 @@ describe("PreviewCanvas transport behavior", () => {
     expect(screen.queryByText("Recovering preview sandbox...")).not.toBeInTheDocument();
   });
 
+  it("does not suppress a watcher build update as an iframe route sync", async () => {
+    const { container, rerender } = render(
+      <PreviewCanvas
+        previewUrl="https://preview.local/sandbox/session-1/?preview_route=%2Fchat&__build=build-1"
+        transportKey="session-1:1"
+        transportStatus="ready"
+        preserveVisibleFrameOnRouteSync
+      />,
+    );
+
+    const frame = await screen.findByTestId("preview-iframe");
+    fireEvent.load(frame);
+
+    rerender(
+      <PreviewCanvas
+        previewUrl="https://preview.local/sandbox/session-1/?preview_route=%2Fchat&__build=build-2"
+        transportKey="session-1:1"
+        transportStatus="ready"
+        preserveVisibleFrameOnRouteSync
+      />,
+    );
+
+    expect(screen.getByTestId("preview-iframe").getAttribute("src")).toContain("__build=build-1");
+    expect(container.querySelectorAll("iframe")).toHaveLength(2);
+
+    const pendingFrame = container.querySelector('iframe[title="App Preview Pending"]');
+    expect(pendingFrame?.getAttribute("src")).toContain("__build=build-2");
+  });
+
   it("renders staged loading steps during cold preview boot", () => {
     render(
       <PreviewCanvas

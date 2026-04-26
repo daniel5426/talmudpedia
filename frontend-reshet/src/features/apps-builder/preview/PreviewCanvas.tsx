@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { PreviewLoadingState } from "@/features/apps-builder/preview/previewLoadingState";
 import { logBuilderPreviewDebug, type PreviewTransportStatus } from "@/features/apps-builder/preview/previewTransport";
+import { normalizeAppsBuilderPreviewRoute } from "@/services/apps-builder-preview-routes";
 
 type PreviewCanvasProps = {
   previewUrl?: string | null;
@@ -20,9 +21,11 @@ type PreviewCanvasProps = {
   onRetry?: (() => void) | null;
   onFrameReady?: ((transportKey: string | null) => void) | null;
   onFrameCleared?: ((transportKey: string | null) => void) | null;
+  onPreviewRouteChange?: ((route: string) => void) | null;
+  preserveVisibleFrameOnRouteSync?: boolean;
 };
 
-type PreviewFrameState = { key: string; src: string };
+type PreviewFrameState = { key: string; src: string; logicalSrc: string };
 
 type PreviewCanvasState = {
   visibleFrame: PreviewFrameState | null;
@@ -35,6 +38,7 @@ type PreviewCanvasAction =
       type: "sync";
       previewUrl: string | null;
       transportKey: string | null;
+      preserveVisibleFrameOnRouteSync: boolean;
     }
   | {
       type: "staged_loaded";
@@ -44,6 +48,22 @@ type PreviewCanvasAction =
     };
 
 const PREVIEW_DEBUG_BRIDGE_MESSAGE_TYPE = "talmudpedia.preview-debug.v1";
+
+function isPreviewRouteOnlyUrlChange(currentUrl: string, nextUrl: string): boolean {
+  try {
+    const current = new URL(currentUrl);
+    const next = new URL(nextUrl);
+    const currentRoute = current.searchParams.get("preview_route") || "";
+    const nextRoute = next.searchParams.get("preview_route") || "";
+    current.searchParams.delete("preview_route");
+    next.searchParams.delete("preview_route");
+    current.hash = "";
+    next.hash = "";
+    return currentRoute !== nextRoute && current.toString() === next.toString();
+  } catch {
+    return false;
+  }
+}
 
 function PreviewWarmupState({
   state,
@@ -114,6 +134,7 @@ function previewCanvasReducer(state: PreviewCanvasState, action: PreviewCanvasAc
           ? {
               key: action.transportKey,
               src: action.previewUrl,
+              logicalSrc: action.previewUrl,
             }
           : null;
 
@@ -134,12 +155,23 @@ function previewCanvasReducer(state: PreviewCanvasState, action: PreviewCanvasAc
         };
       }
       if (state.visibleFrame.key === nextFrame.key) {
-        if (state.visibleFrame.src === nextFrame.src) {
+        const currentLogicalSrc = state.visibleFrame.logicalSrc || state.visibleFrame.src;
+        if (currentLogicalSrc === nextFrame.src) {
           if (!state.stagedFrame) {
             return state;
           }
           return {
             ...state,
+            stagedFrame: null,
+          };
+        }
+        if (action.preserveVisibleFrameOnRouteSync && isPreviewRouteOnlyUrlChange(currentLogicalSrc, nextFrame.src)) {
+          return {
+            ...state,
+            visibleFrame: {
+              ...state.visibleFrame,
+              logicalSrc: nextFrame.src,
+            },
             stagedFrame: null,
           };
         }
@@ -162,7 +194,10 @@ function previewCanvasReducer(state: PreviewCanvasState, action: PreviewCanvasAc
         return state;
       }
       return {
-        visibleFrame: state.stagedFrame,
+        visibleFrame: {
+          ...state.stagedFrame,
+          logicalSrc: state.stagedFrame.logicalSrc || state.stagedFrame.src,
+        },
         stagedFrame: null,
         clearedFrameKey: null,
       };
@@ -195,6 +230,8 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
       onRetry = null,
       onFrameReady = null,
       onFrameCleared = null,
+      onPreviewRouteChange = null,
+      preserveVisibleFrameOnRouteSync = false,
     },
     ref,
   ) {
@@ -228,8 +265,9 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
         type: "sync",
         previewUrl: previewUrl || null,
         transportKey: transportKey || null,
+        preserveVisibleFrameOnRouteSync,
       });
-    }, [previewUrl, transportKey]);
+    }, [preserveVisibleFrameOnRouteSync, previewUrl, transportKey]);
 
     useEffect(() => {
       if (!clearedFrameKey) {
@@ -245,16 +283,23 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
         if (!data || typeof data !== "object" || data.type !== PREVIEW_DEBUG_BRIDGE_MESSAGE_TYPE) {
           return;
         }
+        const payload = typeof data.payload === "object" && data.payload ? data.payload : {};
+        if (payload.event === "preview.route_changed" && typeof payload.route === "string") {
+          const route = normalizeAppsBuilderPreviewRoute(payload.route);
+          if (route) {
+            onPreviewRouteChange?.(route);
+          }
+        }
         logBuilderPreviewDebug("preview", "iframe_bridge", {
           origin: event.origin,
-          ...(typeof data.payload === "object" && data.payload ? data.payload : {}),
+          ...payload,
         });
       };
       window.addEventListener("message", handleMessage);
       return () => {
         window.removeEventListener("message", handleMessage);
       };
-    }, []);
+    }, [onPreviewRouteChange]);
 
     const setVisibleFrameNode = useCallback(
       (node: HTMLIFrameElement | null) => {

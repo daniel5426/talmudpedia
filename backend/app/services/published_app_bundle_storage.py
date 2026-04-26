@@ -160,12 +160,20 @@ class PublishedAppBundleStorage:
             copied += 1
         return copied
 
+    def _prefer_local_fallback(self) -> bool:
+        if not (self._config.allow_local_fallback and self._config.local_dir):
+            return False
+        raw = (os.getenv("APPS_BUNDLE_PREFER_LOCAL_FALLBACK") or "1").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
     def copy_prefix(self, *, source_prefix: str, destination_prefix: str) -> int:
         source = self._normalize_prefix(source_prefix)
         destination = self._normalize_prefix(destination_prefix)
 
         if source == destination:
             return 0
+        if self._prefer_local_fallback():
+            return self._copy_local_prefix(source_prefix=source, destination_prefix=destination)
 
         try:
             client = self._get_client()
@@ -228,6 +236,8 @@ class PublishedAppBundleStorage:
         cache_control: Optional[str] = None,
     ) -> str:
         key = self.build_asset_key(dist_storage_prefix=dist_storage_prefix, asset_path=asset_path)
+        if self._prefer_local_fallback():
+            return self._write_local_asset_bytes(key=key, payload=payload)
         try:
             client = self._get_client()
         except PublishedAppBundleStorageError as exc:
@@ -253,6 +263,9 @@ class PublishedAppBundleStorage:
 
     def read_asset_bytes(self, *, dist_storage_prefix: str, asset_path: str) -> Tuple[bytes, str]:
         key = self.build_asset_key(dist_storage_prefix=dist_storage_prefix, asset_path=asset_path)
+        if self._prefer_local_fallback():
+            payload = self._read_local_asset_bytes(key=key)
+            return payload, mimetypes.guess_type(PurePosixPath(asset_path).name)[0] or "application/octet-stream"
         try:
             client = self._get_client()
         except PublishedAppBundleStorageError as exc:

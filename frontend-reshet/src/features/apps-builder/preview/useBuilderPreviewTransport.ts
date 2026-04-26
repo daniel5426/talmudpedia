@@ -93,7 +93,8 @@ function documentStateReducer(state: DocumentState, action: DocumentAction): Doc
     return state;
   }
   const normalizedCurrent = stripRuntimeToken(state.documentUrl);
-  if (normalizedCurrent === baseDocumentUrl && hasUsableFrame) {
+  const normalizedNext = stripRuntimeToken(nextDocumentUrl);
+  if (normalizedCurrent === normalizedNext && hasUsableFrame) {
     return state;
   }
   return {
@@ -262,7 +263,7 @@ export function useBuilderPreviewTransport({
     livePreviewError,
     livePreviewLastSuccessfulBuildId,
     livePreviewStatus,
-      previewBaseUrl,
+    previewBaseUrl,
     previewRoute,
     sessionId,
     status,

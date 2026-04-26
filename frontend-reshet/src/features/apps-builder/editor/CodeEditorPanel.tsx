@@ -31,6 +31,7 @@ export function CodeEditorPanel({ files, selectedFile, onUpdateFile, readOnly = 
         {activePath ? (
           <CodeEditor
             language={inferLanguage(activePath)}
+            path={activePath}
             value={activeContent}
             onChange={(value) => {
               if (readOnly) return;

@@ -23,8 +23,8 @@ from app.services.opencode_server_client import OpenCodeServerClient
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
-    _ensure_current_draft_revision,
     _get_app_for_tenant,
+    _get_revision,
     _resolve_organization_admin_context,
 )
 from .published_apps_admin_shared import router
@@ -350,7 +350,7 @@ async def submit_coding_agent_message(
     if actor_id is None:
         raise HTTPException(status_code=403, detail="User context is required for coding-agent chat")
     app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
-    draft = await _ensure_current_draft_revision(db, app, actor_id)
+    draft = await _get_revision(db, app.current_draft_revision_id)
     service = PublishedAppCodingChatSessionService(db)
     chat_session = await service.get_chat_session_for_user(app=app, actor_id=actor_id, session_id=session_id)
     parts = [dict(item) for item in payload.parts or [] if isinstance(item, dict)]

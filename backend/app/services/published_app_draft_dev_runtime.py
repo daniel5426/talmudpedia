@@ -983,22 +983,26 @@ class PublishedAppDraftDevRuntimeService:
             agent_id=str(app.agent_id or ""),
         )
         workspace = await self._get_or_create_workspace(app=app)
-        live_snapshot = self._get_live_workspace_snapshot_for_revision(
-            metadata=workspace.backend_metadata,
-            revision_id=revision.id,
-        )
+        explicit_files = dict(files or {})
+        explicit_entry_file = str(entry_file or "").strip() or None
+        live_snapshot = None
+        if not explicit_files:
+            live_snapshot = self._get_live_workspace_snapshot_for_revision(
+                metadata=workspace.backend_metadata,
+                revision_id=revision.id,
+            )
         effective_files = (
             {
                 str(path): str(content if isinstance(content, str) else str(content))
                 for path, content in dict(live_snapshot.get("files") or {}).items()
             }
             if live_snapshot is not None
-            else dict(files or revision.files or {})
+            else dict(explicit_files or revision.files or {})
         )
         effective_entry_file = (
-            str(live_snapshot.get("entry_file") or "").strip() or entry_file or revision.entry_file
+            str(live_snapshot.get("entry_file") or "").strip() or explicit_entry_file or revision.entry_file
             if live_snapshot is not None
-            else (entry_file or revision.entry_file)
+            else (explicit_entry_file or revision.entry_file)
         )
         files_payload = apply_runtime_bootstrap_overlay(
             dict(effective_files),

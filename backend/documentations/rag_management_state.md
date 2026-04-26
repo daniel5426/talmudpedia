@@ -21,11 +21,9 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
     - **Custom**: User-defined Python operators for "escape hatch" logic.
 - **Type-Safe Connections**: Robust real-time validation based on the `DataType` enum system (e.g., `RAW_DOCUMENTS` -> `CHUNKS` connection is validated against the registry's compatibility matrix).
 
-### 2. Custom Operator System (NEW)
-- **Python Integration**: Users can define custom operators by writing Python code directly in the platform.
-- **Restricted Execution**: Custom code runs in a protected namespace with safe builtins and curated standard libraries (`re`, `json`, `datetime`).
-- **Standardized Contract**: Custom operators define their own input/output types and configuration schemas, making them first-class citizens in the Node Catalog.
-- **Tenant Isolation**: Custom operators are scoped to specific tenants and persisted in the `CustomOperator` database model.
+### 2. Legacy Custom Operator Surface
+- The legacy custom-operator admin page and its dedicated CRUD/test APIs have been removed.
+- New extensibility should use artifact-backed RAG operators instead of the old `/admin/rag/operators` surface.
 
 ### 3. Unified Model Integration
 - **Model Registry Alignment**: Embedding and Completion models are managed centrally.
@@ -94,7 +92,7 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
 
 ### Backend Stack
 - **API**: FastAPI with PostgreSQL storage using SQLAlchemy.
-- **Registry**: `OperatorRegistry` maintains the catalog of built-in and tenant-specific custom operators.
+- **Registry**: `OperatorRegistry` maintains the catalog of built-in RAG operators, with legacy compatibility paths still present for older custom-operator-backed pipelines.
 - **Services**: 
     - `PipelineExecutor`: Manages DAG execution.
     - `RetrievalService`: Handles unified semantic and hybrid search across logical stores.
@@ -104,15 +102,15 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
 ### Frontend Stack
 - **Interface**: Next.js with Shadcn/UI and a premium, minimalist design system.
 - **Canvas**: React Flow (XYFlow) for the visual graph editor with muted, pastel category colors.
-- **Management UI**: Direct entry points now center on the Pipeline Builder, Knowledge Stores, and Custom Operators. The legacy `/admin/rag` dashboard page has been removed.
-- **Logic**: Custom hooks for canvas state management and service-oriented integration with the pipeline, knowledge-store, and custom-operator admin APIs.
+- **Management UI**: Direct entry points now center on the Pipeline Builder and Knowledge Stores. The legacy `/admin/rag` dashboard page and `/admin/rag/operators` page have been removed.
+- **Logic**: Custom hooks for canvas state management and service-oriented integration with the pipeline and knowledge-store admin APIs.
 
 ## Implementation State (Phase 3 Completed)
 
 | Feature | Status | Details |
 | :--- | :--- | :--- |
 | Decomposed Operator Categories | ✅ Completed | Normalization, Enrichment, and Chunking split for cleaner pipelines. |
-| Custom Python Operators | ✅ Completed | Integrated editor, storage, and execution engine. |
+| Legacy Custom Operator UI | Removed | Artifact-backed RAG operators replace the old admin surface. |
 | Knowledge Store Abstraction | ✅ Completed | Logical stores decoupling domain from physical vector DBs. |
 | Unified Sink Operator | ✅ Completed | `knowledge_store_sink` replaces vendor-specific storage nodes. |
 | Retrieval Service | ✅ Completed | Coherent API for semantic and hybrid search across stores. |
@@ -127,12 +125,11 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
 | Connection Validation | ✅ Completed | Comprehensive logic supporting all new intermediate data types. |
 | Retrieval Pipelines | ✅ Completed | Support for distinct query pipelines with input/output operators. |
 | Agent Integration | ✅ Completed | Agents now reference logical Knowledge Stores for search. |
-| Multi-tenancy | ✅ Active | Tenant-specific pipeline namespace and custom operator scoping. |
+| Multi-tenancy | ✅ Active | Tenant-specific pipeline namespace remains active. |
 | PGVector Storage | ✅ Active | Integrated with the main system database via pgvector extension. |
 
 ## Next Implementation Priorities
 1. **Multi-Store Retrieval**: Enable retrieval nodes to query multiple Knowledge Stores simultaneously with score normalization.
 2. **Metadata Filtering Engine**: Advanced UI for mapping extracted metadata to vector store fields for pre-filtering.
-3. **JSON Schema Editor**: Integrate a structured JSON editor for custom operator `config_schema` definitions.
-4. **Real-time Metrics**: Visualizing execution time and token usage per operator node in the live tracking view.
-5. **Collection Partitioning**: Support for dynamic namespace creation within Knowledge Stores for multi-subject isolation.
+3. **Real-time Metrics**: Visualizing execution time and token usage per operator node in the live tracking view.
+4. **Collection Partitioning**: Support for dynamic namespace creation within Knowledge Stores for multi-subject isolation.

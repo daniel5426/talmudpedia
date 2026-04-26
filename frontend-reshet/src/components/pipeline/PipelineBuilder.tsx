@@ -48,7 +48,6 @@ interface PipelineBuilderProps {
   initialEdges?: Edge[]
   onChange?: (nodes: Node<PipelineNodeData>[], edges: Edge[]) => void
   onSave?: (nodes: Node<PipelineNodeData>[], edges: Edge[]) => void
-  onAddCustomOperator?: () => void
   onCompile?: () => void
   onRun?: () => void
   pipelineType?: "ingestion" | "retrieval"
@@ -66,7 +65,6 @@ function PipelineBuilderInner({
   initialEdges = [],
   onChange,
   onSave,
-  onAddCustomOperator,
   onCompile,
   onRun,
   pipelineType = "ingestion",
@@ -337,7 +335,6 @@ function PipelineBuilderInner({
         <NodeCatalog
           catalog={catalog}
           onDragStart={handleDragStart}
-          onAddCustomOperator={onAddCustomOperator}
           onClose={() => setIsCatalogVisible(false)}
           pipelineType={pipelineType}
         />

@@ -1,4 +1,4 @@
-Last Updated: 2026-04-23
+Last Updated: 2026-04-24
 
 # WorkOS Native Auth Test State
 
@@ -14,6 +14,7 @@ Last Updated: 2026-04-23
 ## Key Scenarios Covered
 - Expired session path loads the sealed session via the native helper and rotates the cookie with native refresh.
 - Auth code exchange uses the native typed `authenticate_with_code()` API and passes session sealing config.
+- Callback org recovery can switch organizations using the just-issued sealed session before the browser has a session cookie.
 - Concurrent expired-session requests coalesce to a single native refresh and share the rotated cookie result.
 - `/auth/session` resolves the same local `effective_scopes` even when WorkOS permission payloads vary.
 - `/auth/session` auto-switches into the only accessible org when WorkOS session auth succeeds without an active org.
@@ -28,6 +29,7 @@ Last Updated: 2026-04-23
 - 2026-04-19: `SECRET_KEY=explicit-test-secret-0123456789abcdef TEST_USE_REAL_DB=0 /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m pytest -q backend/tests/workos_native_auth/test_workos_native_auth_service.py` -> `3 passed`
 - 2026-04-20: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/workos_native_auth/test_workos_native_auth_service.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py` -> `4 passed`
 - 2026-04-23: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/workos_native_auth/test_workos_native_auth_service.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py backend/tests/security_route_enforcement/test_route_scope_enforcement.py` -> `15 passed`
+- 2026-04-24: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/workos_native_auth/test_workos_native_auth_service.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py` -> `11 passed`
 
 ## Known Gaps
 - Does not hit live WorkOS.

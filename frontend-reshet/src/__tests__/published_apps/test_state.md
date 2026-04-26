@@ -1,12 +1,16 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-04-23
+Last Updated: 2026-04-26
 
 ## Scope
 Frontend coverage for published-apps admin and public runtime surfaces outside the new versions module.
 
 ## Test Files
 - `frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/apps_builder_workspace_manual_save.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/builder_live_preview_status_polling.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/builder_preview_transport_runtime_token.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/preview_canvas_route_bridge.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/apps_builder_file_filter.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/chat_thread_tabs.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/chat_panel_behaviors.test.tsx`
@@ -20,6 +24,7 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 
 ## Key Scenarios Covered
 - Apps admin page list/create/update behavior.
+- Apps builder manual save keeps the just-saved local code authoritative even if a delayed stale draft-dev session snapshot arrives afterward.
 - Apps admin page inline stats: fetch, display, loading skeleton, error degradation, date range switching.
 - Apps admin page reloads cleanly when the active project changes, so stale project data does not survive a switch.
 - Builder file-filter and blocked path rules.
@@ -33,6 +38,11 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Coding-agent stream consumer rejects non-`text/event-stream` responses instead of silently retrying forever on HTML/auth/error bodies.
 - Chat history timeline rebuilds tool rows from official message parts instead of legacy run events.
 - Preview relies on the server-provided bootstrap URL without a client-side auth-token channel, while keeping iframe src stable across same-session route changes.
+- Preview forwards in-iframe route changes back to the parent builder route field via the preview bridge.
+- App-builder preview route input, transport URLs, route discovery, and iframe bridge messages now share one route normalization contract, including relative React Router paths.
+- Preview transport ignores same-session `runtime_token` rotation so draft-dev heartbeats do not trigger iframe reloads.
+- Live preview status keeps polling during active/post-run preview windows even when the current preview status is `ready`, so new watcher dist ids reach the iframe without manual reload.
+- Stale session live-preview metadata does not overwrite a newer status-poll result.
 - Public runtime service omits ambient browser cookies and disables caching for auth and bearer-stream fetches.
 - Preview keeps the iframe mounted during same-session transient pending/recovering states instead of immediately blanking it.
 - Preview stages same-session route changes behind the current iframe and swaps only after the new document loads.
@@ -40,6 +50,18 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Preview keeps the full warmup overlay visible until the iframe is actually usable, instead of disappearing as soon as the iframe node is mounted.
 
 ## Last Run
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/published_apps/builder_preview_transport_runtime_token.test.tsx src/__tests__/published_apps/preview_canvas_route_bridge.test.tsx src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
+- Date: 2026-04-26 Asia/Hebron
+- Result: PASS (`3 suites, 14 tests`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && NODE_OPTIONS=--max-old-space-size=8192 ./node_modules/.bin/jest --runInBand src/__tests__/published_apps/builder_live_preview_status_polling.test.tsx src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx src/__tests__/published_apps/builder_preview_transport_runtime_token.test.tsx`
+- Date: 2026-04-26 Asia/Hebron
+- Result: PASS (`3 suites, 12 tests`). Active/post-run preview polling now detects new watcher build ids even from `ready`, and route-sync preservation no longer masks real `__build` changes.
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/published_apps/builder_preview_transport_runtime_token.test.tsx src/__tests__/published_apps/preview_canvas_route_bridge.test.tsx src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`3 suites, 9 tests`). Same-session iframe-driven route changes now update the builder route field without staging a second preview reload.
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx src/__tests__/published_apps/preview_canvas_route_bridge.test.tsx`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`2 suites, 7 tests`)
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && npm test -- --runTestsByPath src/__tests__/published_apps/apps_admin_page.test.tsx --watch=false`
 - Date: 2026-04-21 Asia/Hebron
 - Result: PASS (`1 suite, 7 tests`)
@@ -101,3 +123,13 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
 - Date: 2026-04-23 Asia/Hebron
 - Result: PASS (`1 suite, 6 tests`). Same-session reconnecting preview states now keep the iframe mounted without showing the small reconnect overlay.
+
+## 2026-04-23 apps-builder manual save stability
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/published_apps/apps_builder_workspace_manual_save.test.tsx src/__tests__/published_apps/apps_admin_page.test.tsx src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`3 suites, 14 tests`). Manual save now trusts the successful sync/materialize response and ignores delayed stale draft-dev session snapshots instead of reloading older live-workspace content back into the code editor.
+
+## 2026-04-23 preview runtime-token stability
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/published_apps/builder_preview_transport_runtime_token.test.tsx src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`2 suites, 7 tests`). Same-session draft-dev heartbeat token rotation no longer changes the effective iframe document URL, so the preview should stop reloading on heartbeat-only session refreshes.

@@ -47,10 +47,6 @@ export const sidebarContent = {
           title: "Knowledge Stores",
           url: "/admin/rag/knowledge-stores",
         },
-        {
-          title: "Operators",
-          url: "/admin/rag/operators",
-        },
       ],
     },
     {

@@ -179,9 +179,10 @@ class PublishedAppDraftRevisionMaterializerService:
         origin_run_id: UUID | None = None,
         restored_from_revision_id: UUID | None = None,
     ) -> MaterializedDraftRevisionResult:
+        app_id = app.id
         self._trace(
             "materialize.begin",
-            app_id=app.id,
+            app_id=app_id,
             origin_kind=origin_kind,
             origin_run_id=str(origin_run_id or ""),
             source_revision_id=str(source_revision_id or ""),
@@ -195,7 +196,7 @@ class PublishedAppDraftRevisionMaterializerService:
                 origin_kind=origin_kind,
                 origin_run_id=origin_run_id,
             )
-            await self._acquire_app_lock(app_id=app.id)
+            await self._acquire_app_lock(app_id=app_id)
             result = await self._create_or_reuse_revision_from_build(
                 app=app,
                 build_result=build_result,
@@ -208,7 +209,7 @@ class PublishedAppDraftRevisionMaterializerService:
         except PublishedAppWorkspaceBuildError as exc:
             self._trace(
                 "materialize.failed",
-                app_id=app.id,
+                app_id=app_id,
                 origin_kind=origin_kind,
                 run_id=str(origin_run_id or ""),
                 error=str(exc),
@@ -218,7 +219,7 @@ class PublishedAppDraftRevisionMaterializerService:
         except Exception as exc:
             self._trace(
                 "materialize.failed",
-                app_id=app.id,
+                app_id=app_id,
                 origin_kind=origin_kind,
                 run_id=str(origin_run_id or ""),
                 error=str(exc),
@@ -228,7 +229,7 @@ class PublishedAppDraftRevisionMaterializerService:
 
         self._trace(
             "materialize.done",
-            app_id=app.id,
+            app_id=app_id,
             revision_id=str(result.revision.id),
             reused=result.reused,
             source_fingerprint=result.source_fingerprint,

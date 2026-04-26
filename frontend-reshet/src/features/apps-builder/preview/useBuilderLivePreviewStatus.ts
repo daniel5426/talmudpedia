@@ -15,6 +15,31 @@ type UseBuilderLivePreviewStatusOptions = {
 
 const ACTIVE_POLL_MS = 1500;
 
+function livePreviewStatesEqual(left: LivePreviewState | null, right: LivePreviewState | null): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if ((left as Record<string, unknown>)[key] !== (right as Record<string, unknown>)[key]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function livePreviewUpdatedAtMs(state: LivePreviewState | null): number {
+  const value = String(state?.updated_at || "").trim();
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export function useBuilderLivePreviewStatus({
   previewBaseUrl,
   sessionLivePreview,
@@ -31,20 +56,20 @@ export function useBuilderLivePreviewStatus({
       if (!next) {
         return current;
       }
-      return {
+      const currentUpdatedAt = livePreviewUpdatedAtMs(current);
+      const nextUpdatedAt = livePreviewUpdatedAtMs(next);
+      if (current && currentUpdatedAt > 0 && nextUpdatedAt > 0 && nextUpdatedAt < currentUpdatedAt) {
+        return current;
+      }
+      const merged = {
         ...current,
         ...next,
       };
+      return livePreviewStatesEqual(current, merged) ? current : merged;
     });
   }, [sessionLivePreview]);
 
-  const shouldPoll = useMemo(() => {
-    const status = String(state?.status || sessionLivePreview?.status || "").trim().toLowerCase();
-    return status === "booting"
-      || status === "building"
-      || status === "recovering"
-      || status === "failed_no_build";
-  }, [sessionLivePreview?.status, state?.status]);
+  const shouldPoll = useMemo(() => enabled, [enabled]);
 
   const sessionPreviewStatus = sessionLivePreview?.status || null;
   const currentStateStatus = state?.status || null;
@@ -74,7 +99,10 @@ export function useBuilderLivePreviewStatus({
         if (cancelled) {
           return;
         }
-        setState((current) => ({ ...(current || {}), ...next }));
+        setState((current) => {
+          const merged = { ...(current || {}), ...next } as LivePreviewState;
+          return livePreviewStatesEqual(current, merged) ? current : merged;
+        });
         logBuilderPreviewDebug("live-preview", "status", {
           previewBaseUrl,
           status: next.status || null,
